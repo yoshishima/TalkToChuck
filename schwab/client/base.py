@@ -14,8 +14,9 @@ from urllib.parse import quote
 
 from schwab.orders.generic import OrderBuilder
 
-from ..debug import get_redacted_logger, register_redactions_from_response
-from ..utils import EnumEnforcer
+from ..debug import (
+    get_redacted_logger, redact_json, register_redactions_from_response)
+from ..utils import EnumEnforcer, LazyLog
 
 
 def get_logger():
@@ -108,6 +109,24 @@ class BaseClient(EnumEnforcer, ABC):
     # we can use them later.
     _DATETIME = datetime.datetime
     _DATE = datetime.date
+
+    def _log_request(self, method, dest, payload=None):
+        '''Log requests without exposing account/order identifiers.'''
+        req_num = self._req_num()
+        if not self.logger.isEnabledFor(logging.DEBUG):
+            return req_num
+
+        log_dest = re.sub(
+            r'/(accounts|orders|transactions)/(?!accountNumbers(?:/|$))[^/]+',
+            r'/\1/<REDACTED>', dest)
+        if payload is None:
+            self.logger.debug('Req %s: %s to %s', req_num, method, log_dest)
+        else:
+            self.logger.debug('Req %s: %s to %s, %s=%s',
+                              req_num, method, log_dest,
+                              'params' if method == 'GET' else 'json',
+                              LazyLog(lambda: redact_json(payload)))
+        return req_num
 
     def _log_response(self, resp, req_num):
         if not self.logger.isEnabledFor(logging.DEBUG):

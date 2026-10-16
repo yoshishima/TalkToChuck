@@ -96,9 +96,13 @@ for help, carefully read through your logs to see if there's anything there that
 helps you.
 
 Ordinary DEBUG logging omits HTTP response bodies, which can contain account
-balances and positions. Stream payloads redact recognized sensitive fields,
-including login credentials, before reaching logging handlers. Registered
-secrets are also redacted before records propagate to application handlers.
+balances and positions. Request URLs mask account, order, and transaction
+identifiers. HTTP request and stream payloads redact recognized sensitive
+fields, including login credentials and arrays of account identifiers, before
+reaching logging handlers.
+Registered secrets are redacted before JSON serialization, including escaped
+strings, and from exception tracebacks and stack information. Refreshed tokens
+are registered for redaction before persistence is attempted.
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

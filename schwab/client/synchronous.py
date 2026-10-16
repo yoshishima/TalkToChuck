@@ -1,16 +1,11 @@
 from .base import BaseClient
-from ..utils import LazyLog
-
-import json
 
 
 class Client(BaseClient):
     def _get_request(self, path, params):
         dest = 'https://api.schwabapi.com' + path
 
-        req_num = self._req_num()
-        self.logger.debug('Req %s: GET to %s, params=%s',
-                req_num, dest, LazyLog(lambda: json.dumps(params, indent=4)))
+        req_num = self._log_request('GET', dest, params)
 
         resp = self.session.get(dest, params=params)
         self._log_response(resp, req_num)
@@ -19,9 +14,7 @@ class Client(BaseClient):
     def _post_request(self, path, data):
         dest = 'https://api.schwabapi.com' + path
 
-        req_num = self._req_num()
-        self.logger.debug('Req %s: POST to %s, json=%s',
-            req_num, dest, LazyLog(lambda: json.dumps(data, indent=4)))
+        req_num = self._log_request('POST', dest, data)
 
         resp = self.session.post(dest, json=data)
         self._log_response(resp, req_num)
@@ -30,9 +23,7 @@ class Client(BaseClient):
     def _put_request(self, path, data):
         dest = 'https://api.schwabapi.com' + path
 
-        req_num = self._req_num()
-        self.logger.debug('Req %s: PUT to %s, json=%s',
-            req_num, dest, LazyLog(lambda: json.dumps(data, indent=4)))
+        req_num = self._log_request('PUT', dest, data)
 
         resp = self.session.put(dest, json=data)
         self._log_response(resp, req_num)
@@ -41,8 +32,7 @@ class Client(BaseClient):
     def _delete_request(self, path):
         dest = 'https://api.schwabapi.com' + path
 
-        req_num = self._req_num()
-        self.logger.debug('Req %s: DELETE to %s', req_num, dest)
+        req_num = self._log_request('DELETE', dest)
 
         resp = self.session.delete(dest)
         self._log_response(resp, req_num)

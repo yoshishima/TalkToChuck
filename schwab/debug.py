@@ -21,6 +21,13 @@ class _RedactingFilter(logging.Filter):
     def filter(self, record):
         record.msg = schwab.LOG_REDACTOR.redact(record.getMessage())
         record.args = ()
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(
+                record.exc_info)
+        if record.exc_text:
+            record.exc_text = schwab.LOG_REDACTOR.redact(record.exc_text)
+        if record.stack_info:
+            record.stack_info = schwab.LOG_REDACTOR.redact(record.stack_info)
         return True
 
 
@@ -44,10 +51,11 @@ def redact_json(payload):
             return {key: sanitize(item) for key, item in value.items()}
         if isinstance(value, list):
             return [sanitize(item) for item in value]
-        if str(value) in redactor.redacted_strings:
-            return redactor.redact(str(value))
+        if (str(value) in redactor.redacted_strings
+                or str(value) in schwab.LOG_REDACTOR.redacted_strings):
+            return schwab.LOG_REDACTOR.redact(redactor.redact(str(value)))
         if isinstance(value, str):
-            return redactor.redact(value)
+            return schwab.LOG_REDACTOR.redact(redactor.redact(value))
         return value
     return schwab.LOG_REDACTOR.redact(json.dumps(sanitize(payload), indent=4))
 
@@ -202,7 +210,10 @@ def register_redactions(obj, key_path=None,
                 return False
     else:
         if key_path:
-            last_key = key_path[-1].lower()
+            # List indices are not field names. Carry a sensitive field's
+            # classification through arrays, including nested arrays.
+            last_key = next((key.lower() for key in reversed(key_path)
+                             if not key.isdecimal()), '')
             if last_key in whitelisted:
                 return True
             elif any(bad in last_key for bad in bad_patterns):

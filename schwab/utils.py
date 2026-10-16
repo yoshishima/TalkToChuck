@@ -113,7 +113,8 @@ class Utils(EnumEnforcer):
     def extract_order_id(self, place_order_response):
         '''Attempts to extract the order hash from a response object returned by
         :meth:`Client.place_order() <schwab.client.Client.place_order>`. Return
-        ``None`` if the order location is not contained in the response.
+        ``None`` if the order location is absent or does not exactly match a
+        Schwab order URL.
 
         :param place_order_response: Order response as returned by
                                      :meth:`Client.place_order()
@@ -134,8 +135,9 @@ class Utils(EnumEnforcer):
         except KeyError:
             return None
 
-        m = re.match(
-                r'https://api.schwabapi.com/trader/v1/accounts/(\w+)/orders/(\d+)',
+        m = re.fullmatch(
+                r'https://api\.schwabapi\.com/trader/v1/accounts/'
+                r'([A-Za-z0-9_-]+)/orders/([0-9]+)',
                 location)
 
         if m is None:

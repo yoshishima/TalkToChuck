@@ -903,7 +903,8 @@ class ClientFromManualFlow(unittest.TestCase):
                              token_write_func=dummy_token_write_func))
 
         sync_session.assert_called_with(
-                _, client_secret=APP_SECRET, token=_, update_token=_, leeway=_)
+                _, client_secret=APP_SECRET, token=_,
+                token_endpoint=auth.TOKEN_ENDPOINT, update_token=_, leeway=_)
 
         self.assertEqual([{
             'creation_timestamp': MOCK_NOW,

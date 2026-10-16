@@ -1,6 +1,8 @@
 import callee
 import httpx2 as httpx
+from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest.mock import call, MagicMock, patch
 
@@ -481,5 +483,8 @@ class ScriptInvocationTest(unittest.TestCase):
 
     def test_get_help(self):
         output = subprocess.check_output(
-                'schwab-order-codegen.py --help',
-                shell=True, text=True)
+                [sys.executable, str(Path(__file__).resolve().parents[2]
+                                     / 'bin' / 'schwab-order-codegen.py'),
+                 '--help'], text=True)
+        self.assertIn('--account_hash', output)
+        self.assertIn('--token_file', output)

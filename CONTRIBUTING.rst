@@ -11,9 +11,8 @@ contribute.
 Setting up the Dev Environment
 ------------------------------
 
-Dependencies are listed in the `requirements.txt` file. These development 
-requirements are distinct from the requirements listed in `setup.py` and include 
-some additional packages around testing, documentation generation, etc.
+Runtime dependencies and the ``dev`` extra are listed in ``setup.py``.
+The development extra adds testing, documentation, and packaging tools.
 
 Before you install anything, I highly recommend setting up a `virtualenv` so you 
 don't pollute your system installation directories:

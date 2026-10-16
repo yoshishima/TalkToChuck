@@ -541,15 +541,19 @@ class StreamClient(EnumEnforcer):
         if dispatch_state.handlers is None:
             dispatch_state.handlers = tuple(self._handlers[service])
         handlers = dispatch_state.handlers
+        owns_message = False
         if label_message and handlers:
             try:
-                message = handlers[0].label_message(message)
+                labeled = handlers[0].label_message(message)
+                owns_message = labeled is not message
+                message = labeled
             except Exception as exception:
                 self._log_handler_exception(
                         'Stream message relabeling failed', exception)
                 return
 
-        for handler in handlers[dispatch_state.next_handler:]:
+        for index in range(dispatch_state.next_handler, len(handlers)):
+            handler = handlers[index]
             # Apply backpressure before invoking a handler or creating a task.
             await self._handler_slots.acquire()
             if generation != self._connection_generation:
@@ -557,7 +561,14 @@ class StreamClient(EnumEnforcer):
                 raise StreamClosedError('Stream connection replaced')
             release_slot = True
             try:
-                result = handler(copy.deepcopy(message))
+                # Relabeling already copied data messages. Give that owned
+                # copy to the last handler, after earlier handlers received
+                # their independent copies. Keep the wire message untouched
+                # so cancellation can safely resume a pending dispatch.
+                use_owned_message = owns_message and index == len(handlers) - 1
+                handler_message = (
+                    message if use_owned_message else copy.deepcopy(message))
+                result = handler(handler_message)
                 if inspect.isawaitable(result):
                     task = asyncio.ensure_future(result)
                     self._handler_tasks.add(task)
