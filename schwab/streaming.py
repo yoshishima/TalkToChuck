@@ -120,8 +120,13 @@ class StreamClient(EnumEnforcer):
 
     def __init__(self, client, *, account_id=None,
                  enforce_enums=True, ssl_context=None, response_timeout=30.0,
-                 max_pending_handler_tasks=100, max_pending_messages=1000):
+                 max_pending_handler_tasks=100, max_pending_messages=1000,
+                 offload_sync_preferences=False):
         super().__init__(enforce_enums)
+
+        if type(offload_sync_preferences) is not bool:
+            raise ValueError('offload_sync_preferences must be a bool')
+        self._offload_sync_preferences = offload_sync_preferences
 
         if type(max_pending_messages) is not int or max_pending_messages <= 0:
             raise ValueError('max_pending_messages must be a positive int')
@@ -222,16 +227,46 @@ class StreamClient(EnumEnforcer):
             try:
                 ret = self.json_decoder.decode_json_string(raw)
             except (json.decoder.JSONDecodeError, UnicodeDecodeError) as e:
-                msg = ('Failed to parse message. This often happens with ' +
-                       'unknown symbols or other error conditions. Full ' +
-                       'message text: {!r}'.format(raw))
+                msg = ('Failed to parse stream message. The raw message is '
+                       'available in raw_msg and may contain sensitive data.')
                 raise UnparsableMessage(raw, e, msg) from e
+
+            error = self._envelope_error(ret)
+            if error is not None:
+                cause = ValueError(error)
+                raise UnparsableMessage(
+                    raw, cause, 'Invalid stream message envelope') from cause
 
             self.logger.debug(
                 'Receive %s: Returning message from stream: %s',
                 self.req_num(), LazyLog(lambda: redact_json(ret)))
 
         return ret
+
+    @staticmethod
+    def _envelope_error(message):
+        if not isinstance(message, dict):
+            return 'Stream message must be an object'
+        for key in ('data', 'notify'):
+            if key in message and not isinstance(message[key], list):
+                return '{} must be a list'.format(key)
+        if 'response' not in message:
+            return None
+        responses = message['response']
+        if (not isinstance(responses, list) or not responses
+                or not isinstance(responses[0], dict)):
+            return 'Response must be a nonempty list of objects'
+        response = responses[0]
+        try:
+            int(response['requestid'])
+        except (KeyError, ValueError, TypeError, OverflowError):
+            return 'Response request ID is missing or invalid'
+        content = response.get('content')
+        if ('service' not in response or 'command' not in response
+                or not isinstance(content, dict) or 'code' not in content
+                or (content['code'] != 0 and 'msg' not in content)):
+            return 'Response fields are missing or invalid'
+        return None
 
     async def _init_from_preferences(self, prefs, websocket_connect_args):
         await self._close_connection()
@@ -634,7 +669,7 @@ class StreamClient(EnumEnforcer):
             raise UnexpectedResponse(msg,
                                      'unexpected response code during message handling: {}, msg is \'{}\''.format(
                                          msg['response'][0]['content']['code'],
-                                         msg['response'][0]['content']['msg']))
+                                         msg['response'][0]['content'].get('msg', '')))
 
         if not isinstance(msg, _PendingMessage):
             msg = _PendingMessage(msg)
@@ -712,11 +747,14 @@ class StreamClient(EnumEnforcer):
         '''
 
         # Fetch required data and initialize the client
-        r = self._client.get_user_preferences()
+        if self._offload_sync_preferences:
+            r = await asyncio.to_thread(self._client.get_user_preferences)
+        else:
+            r = self._client.get_user_preferences()
 
         # We don't actually know whether the client is synchronous or
         # asynchronous, so work around by awaiting the response if necessary
-        if inspect.iscoroutine(r):
+        if inspect.isawaitable(r):
             r = await r
         if r.status_code != httpx.codes.OK:
             r.raise_for_status()

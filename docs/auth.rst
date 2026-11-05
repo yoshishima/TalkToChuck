@@ -365,6 +365,12 @@ experiencing token parsing issues, remember that:
    applications, one of them will beat the other to refreshing, locking the 
    slower one out of using ``schwab-py``.
 
+This restriction also applies to separate clients in the same application or
+process, as well as to multiple processes or machines. Use one owner for each
+token and route requests through that owner. The library does not coordinate
+refreshes across independent clients or custom token stores; atomic file writes
+and each async client's lock do not serialize the OAuth refresh itself.
+
 If you didn't do any of this and are still seeing issues using a token file that 
 you're confident is valid, please `file a ticket 
 <https://github.com/alexgolec/schwab-py/issues>`__. Just remember, **never share 

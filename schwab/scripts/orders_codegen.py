@@ -1,9 +1,30 @@
 import argparse
+import datetime
 import httpx2 as httpx
-import json
 
 from schwab.auth import client_from_token_file
 from schwab.contrib.orders import construct_repeat_order, code_for_builder
+
+
+def _latest_order(orders):
+    if not isinstance(orders, list) or not orders:
+        raise ValueError('orders must be a nonempty list')
+    if len(orders) == 1:
+        if not isinstance(orders[0], dict) or 'orderId' not in orders[0]:
+            raise ValueError('order ID is missing')
+        return orders[0]
+
+    def sort_key(order):
+        try:
+            timestamp = datetime.datetime.fromisoformat(order['enteredTime'])
+            order_id = int(order['orderId'])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise ValueError('order timestamp or ID is invalid') from None
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError('order timestamp must include a timezone')
+        return timestamp, order_id
+
+    return max(orders, key=sort_key)
 
 
 def latest_order_main(sys_args):
@@ -40,9 +61,7 @@ def latest_order_main(sys_args):
                 account_hash = val['hashValue']
                 break
         else:
-            print(('Failed to find account hash for account ID {}. Searched ' +
-                   'the following accounts:\n{}').format(
-                       args.account_id, json.dumps(r.json(), indent=4)))
+            print('Failed to find account hash for account ID.')
             return -1
     else:
         account_hash = args.account_hash
@@ -79,7 +98,11 @@ def latest_order_main(sys_args):
 
     # Construct and emit order code
     if orders:
-        order = max(orders, key=lambda o: o['orderId'])
+        try:
+            order = _latest_order(orders)
+        except ValueError:
+            print('Unable to determine the most recent order from its timestamp.')
+            return -1
 
         # XXX: If necessary, warn about the jank around destinations
         emit_destination_warning_newline = False

@@ -149,3 +149,5 @@ virtualenv
 
 docs-build/
 temp.txt
+/audit-scratch-2026-11-04
+/performance-audit

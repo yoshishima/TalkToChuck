@@ -3,7 +3,7 @@ import copy
 import json
 import unittest
 import urllib.parse
-from decimal import Inexact, Rounded, ROUND_DOWN, ROUND_UP, localcontext
+from decimal import Decimal, Inexact, Rounded, ROUND_DOWN, ROUND_UP, localcontext
 from unittest.mock import AsyncMock, Mock, patch
 
 import flask
@@ -11,7 +11,7 @@ import flask
 from schwab import auth
 from schwab.contrib.orders import (
     UnrepeatableOrderError, code_for_builder, construct_repeat_order)
-from schwab.orders.common import OrderStrategyType
+from schwab.orders.common import OptionInstruction, OrderStrategyType
 from schwab.orders.equities import equity_buy_market
 from schwab.orders.generic import OrderBuilder
 from schwab.orders.options import OptionSymbol
@@ -53,6 +53,51 @@ class StrikePrecisionTest(unittest.TestCase):
                     'SPXW', '260918', 'C', value).build().endswith(suffix))
 
 
+class PriceDecimalContextTest(unittest.TestCase):
+    def test_numeric_prices_ignore_callers_precision_and_rounding_traps(self):
+        for precision in (1, 2, 6, 28):
+            for rounding in (ROUND_DOWN, ROUND_UP):
+                with self.subTest(precision=precision, rounding=rounding):
+                    with localcontext() as context:
+                        context.prec = precision
+                        context.rounding = rounding
+                        context.traps[Inexact] = True
+                        context.traps[Rounded] = True
+                        builder = (OrderBuilder()
+                            .set_price(Decimal('12.349'))
+                            .set_stop_price(Decimal('0.1234'))
+                            .add_option_leg(
+                                OptionInstruction.BUY_TO_OPEN, 'SYNTHETIC', 1))
+                        built = builder.build()
+                        self.assertEqual('12.34', built['price'])
+                        self.assertEqual('0.12', built['stopPrice'])
+                        self.assertFalse(context.flags[Inexact])
+                        self.assertFalse(context.flags[Rounded])
+
+    def test_negative_zero_and_large_exact_prices(self):
+        with localcontext() as context:
+            context.prec = 1
+            self.assertEqual('0.00',
+                             OrderBuilder().set_price(Decimal('-0')).build()['price'])
+            price = '123456789012345678901234567890.12'
+            self.assertEqual(price, OrderBuilder().set_price(
+                Decimal(price)).build()['price'])
+            self.assertEqual('1' + '0' * 100 + '.00',
+                             OrderBuilder().set_price(
+                                 Decimal('1e100')).build()['price'])
+            with self.assertRaisesRegex(ValueError, 'too large'):
+                OrderBuilder().set_price(Decimal('1e1000000'))
+
+    def test_subcent_option_price_still_rejected(self):
+        with localcontext() as context:
+            context.prec = 1
+            context.traps[Inexact] = True
+            context.traps[Rounded] = True
+            builder = (OrderBuilder().set_price(Decimal('0.005'))
+                       .add_option_leg(OptionInstruction.BUY_TO_OPEN,
+                                       'SYNTHETIC', 1))
+            with self.assertRaisesRegex(ValueError, 'truncate to zero'):
+                builder.build()
 class CompositeOrderTest(unittest.TestCase):
     def test_unsupported_child_counts_are_rejected_in_both_paths(self):
         cases = [('TRIGGER', 0), ('TRIGGER', 2), ('OCO', 0),

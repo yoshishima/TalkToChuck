@@ -556,6 +556,9 @@ def client_from_token_file(token_path, api_key, app_secret, asyncio=False,
     an auth refresh as needed. It will also update the token on disk whenever
     appropriate.
 
+    Use one client owner per token. Independent clients or processes sharing a
+    token file do not coordinate refreshes and can overwrite newer tokens.
+
     :param token_path: Path to an existing token. Updated tokens will be written
                        to this path. If you do not yet have a token, use
                        :func:`~schwab.auth.client_from_login_flow` or
@@ -678,6 +681,10 @@ def client_from_access_functions(api_key, app_secret, token_read_func,
     they store it and fetch it. In practice, it is *highly* recommended to
     simply accept the token object and use ``json`` to serialize and
     deserialize it, without inspecting it in any way.
+
+    Independent clients do not coordinate refreshes against a shared token
+    store. Use a single owner for each token or provide external coordination
+    for the entire refresh and persistence operation.
 
     Note the read and write methods must take particular arguments. Please see 
     `this example <https://github.com/alexgolec/schwab-py/tree/master/examples/

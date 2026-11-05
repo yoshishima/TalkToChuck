@@ -182,8 +182,9 @@ def register_redactions(obj, key_path=None,
                         *, persistent=True, redactor=None):
     '''
     Recursively iterates through the leaf elements of ``obj`` and registers
-    elements with keys matching a blacklist with the supplied ``Redactor``
-    (or the global redactor by default).
+    elements with keys or ancestor keys matching a blacklist with the supplied
+    ``Redactor`` (or the global redactor by default). A whitelisted field does
+    not override a sensitive ancestor.
     '''
     if key_path is None:
         key_path = []
@@ -210,15 +211,15 @@ def register_redactions(obj, key_path=None,
                 return False
     else:
         if key_path:
-            # List indices are not field names. Carry a sensitive field's
-            # classification through arrays, including nested arrays.
-            last_key = next((key.lower() for key in reversed(key_path)
-                             if not key.isdecimal()), '')
-            if last_key in whitelisted:
-                return True
-            elif any(bad in last_key for bad in bad_patterns):
+            # A sensitive ancestor protects all of its descendants, including
+            # objects inside arrays. A whitelisted child cannot override it.
+            field_names = (str(key).lower() for key in key_path
+                           if not str(key).isdecimal())
+            if any(name not in whitelisted and
+                   any(bad in name for bad in bad_patterns)
+                   for name in field_names):
                 return redactor.register(
-                        obj, '-'.join(key_path), persistent=persistent)
+                        obj, '-'.join(map(str, key_path)), persistent=persistent)
     return True
 
 

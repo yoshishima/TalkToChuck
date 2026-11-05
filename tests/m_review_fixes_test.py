@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import json
+import threading
+import traceback
 import unittest
 import warnings
 from unittest.mock import AsyncMock, Mock
@@ -48,6 +50,35 @@ class StreamIsolationTest(unittest.IsolatedAsyncioTestCase):
                 await client.handle_message()
                 self.assertEqual(2, handler.call_count)
 
+    async def test_invalid_envelopes_preserve_ack_and_message_order(self):
+        bad_frames = ['null', '[]', '{"response":[]}',
+                      '{"response":[{"requestid":"bad"}]}',
+                      '{"data":null}']
+        message = json.dumps({'data': [{'service': 'ACCT_ACTIVITY',
+                                        'content': []}]})
+        client, _ = self.make_client(bad_frames + [message])
+        handler = Mock()
+        client.add_account_activity_handler(handler)
+        await client.level_one_equity_subs(['SYNTHETIC'])
+        for raw in bad_frames:
+            with self.subTest(raw=raw):
+                with self.assertRaises(UnparsableMessage) as raised:
+                    await client.handle_message()
+                self.assertEqual(raw, raised.exception.raw_msg)
+        await client.handle_message()
+        self.assertEqual(1, handler.call_count)
+
+    async def test_parse_error_text_does_not_expose_raw_frame(self):
+        raw = '{"accountNumber":"synthetic-private-marker",'
+        client, _ = self.make_client([raw])
+        await client.level_one_equity_subs(['SYNTHETIC'])
+        with self.assertRaises(UnparsableMessage) as raised:
+            await client.handle_message()
+        self.assertEqual(raw, raised.exception.raw_msg)
+        self.assertNotIn('synthetic-private-marker', str(raised.exception))
+        self.assertNotIn('synthetic-private-marker', ''.join(
+            traceback.format_exception(raised.exception)))
+
     async def test_bad_entries_do_not_drop_later_data(self):
         client, _ = self.make_client([])
         handler = Mock()
@@ -85,6 +116,62 @@ class StreamIsolationTest(unittest.IsolatedAsyncioTestCase):
         for value in (0, -1, True, 1.5, None):
             with self.assertRaises(ValueError):
                 StreamClient(Mock(), max_pending_messages=value)
+
+    async def test_opt_in_offloads_synchronous_preferences(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def preferences():
+            started.set()
+            if not release.wait(2):
+                raise TimeoutError('test did not release preferences call')
+            raise RuntimeError('synthetic failure')
+
+        client = StreamClient(Mock(get_user_preferences=preferences),
+                              offload_sync_preferences=True)
+        task = asyncio.create_task(client.login())
+        try:
+            self.assertTrue(await asyncio.wait_for(
+                asyncio.to_thread(started.wait, 1), timeout=2))
+            self.assertFalse(task.done())
+        finally:
+            release.set()
+        with self.assertRaisesRegex(RuntimeError, 'synthetic failure'):
+            await task
+
+    async def test_cancelled_offloaded_lookup_can_finish_in_worker(self):
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def preferences():
+            started.set()
+            try:
+                release.wait(2)
+            finally:
+                finished.set()
+
+        client = StreamClient(Mock(get_user_preferences=preferences),
+                              offload_sync_preferences=True)
+        task = asyncio.create_task(client.login())
+        try:
+            self.assertTrue(await asyncio.wait_for(
+                asyncio.to_thread(started.wait, 1), timeout=2))
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+        self.assertTrue(await asyncio.wait_for(
+            asyncio.to_thread(finished.wait, 1), timeout=2))
+
+    async def test_async_preferences_work_with_offloading_enabled(self):
+        preferences = AsyncMock(side_effect=RuntimeError('synthetic failure'))
+        client = StreamClient(Mock(get_user_preferences=preferences),
+                              offload_sync_preferences=True)
+        with self.assertRaisesRegex(RuntimeError, 'synthetic failure'):
+            await client.login()
+        preferences.assert_awaited_once()
 
 
 class OptionPrecisionTest(unittest.TestCase):

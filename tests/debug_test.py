@@ -83,6 +83,27 @@ class RedactorTest(unittest.TestCase):
 
 
 class OrdinaryLoggingTest(unittest.TestCase):
+    def test_sensitive_parent_covers_nested_objects_and_whitelisted_names(self):
+        payload = {
+            'authentication': {'credential': {'value': 'private-credential'}},
+            'accountNumber': [{'requestId': 'private-account'}],
+            'requestId': 'public-request',
+        }
+        with patch.object(schwab, 'LOG_REDACTOR', schwab.debug.LogRedactor()):
+            sanitized = json.loads(schwab.debug.redact_json(payload))
+        self.assertNotIn('private-credential', json.dumps(sanitized))
+        self.assertNotIn('private-account', json.dumps(sanitized))
+        self.assertEqual('public-request', sanitized['requestId'])
+        self.assertEqual('private-credential',
+                         payload['authentication']['credential']['value'])
+
+    def test_structured_redaction_accepts_numeric_object_keys(self):
+        payload = {123: {'accountNumber': 'private-account'}}
+        with patch.object(schwab, 'LOG_REDACTOR', schwab.debug.LogRedactor()):
+            output = schwab.debug.redact_json(payload)
+        self.assertNotIn('private-account', output)
+        self.assertIn('REDACTED', output)
+
     def test_response_bodies_are_omitted_from_root_handler(self):
         session = Mock()
         client = Client('test-api-key', session)

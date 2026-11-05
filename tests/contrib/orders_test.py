@@ -1,14 +1,65 @@
 import json
 import unittest
 import sys
+from decimal import Decimal
 
 from schwab.contrib.orders import (
         UnrepeatableOrderError,
         code_for_builder,
         construct_repeat_order,
 )
-from schwab.orders.common import EquityInstruction, OptionInstruction, OrderType
+from schwab.orders.common import (
+        EquityInstruction, OptionInstruction, OrderType, first_triggers_second)
 from schwab.orders.generic import OrderBuilder
+
+
+class GeneratedNumericPriceTest(unittest.TestCase):
+    def rebuild(self, builder):
+        namespace = {}
+        exec(code_for_builder(builder, 'order'), namespace)
+        return namespace['order']
+
+    def option(self):
+        return OrderBuilder().add_option_leg(
+            OptionInstruction.BUY_TO_OPEN, 'SYNTHETIC', 1)
+
+    def test_numeric_option_prices_and_stops_retain_build_behavior(self):
+        for setter, key in (('set_price', 'price'),
+                            ('set_stop_price', 'stopPrice')):
+            for value in (Decimal('0.1234'), Decimal('0.005')):
+                with self.subTest(setter=setter, value=value):
+                    original = getattr(self.option(), setter)(value)
+                    rebuilt = self.rebuild(original)
+                    if value == Decimal('0.005'):
+                        with self.assertRaisesRegex(ValueError, 'truncate to zero'):
+                            original.build()
+                        with self.assertRaisesRegex(ValueError, 'truncate to zero'):
+                            rebuilt.build()
+                    else:
+                        self.assertEqual(original.build(), rebuilt.build())
+                        self.assertEqual('0.12', rebuilt.build()[key])
+
+    def test_explicit_string_prices_keep_their_precision(self):
+        original = self.option().set_price('0.1234').set_stop_price('0.005')
+        self.assertEqual(original.build(), self.rebuild(original).build())
+        self.assertEqual('0.1234', self.rebuild(original).build()['price'])
+
+    def test_numeric_price_stays_numeric_after_later_leg_changes(self):
+        original = OrderBuilder().set_price(Decimal('0.1234'))
+        rebuilt = self.rebuild(original)
+        for builder in (original, rebuilt):
+            builder.add_option_leg(OptionInstruction.BUY_TO_OPEN, 'SYNTHETIC', 1)
+        self.assertEqual(original.build(), rebuilt.build())
+        self.assertEqual('0.12', rebuilt.build()['price'])
+
+    def test_nested_option_order_retains_numeric_and_explicit_prices(self):
+        child = self.option().set_price(Decimal('0.1234')).set_stop_price('0.005')
+        parent = first_triggers_second(OrderBuilder(), child)
+        self.assertEqual(parent.build(), self.rebuild(parent).build())
+        rebuilt_child = self.rebuild(parent).build()['childOrderStrategies'][0]
+        self.assertEqual('0.12', rebuilt_child['price'])
+        self.assertEqual('0.005', rebuilt_child['stopPrice'])
+
 
 class ConstructRepeatOrderTest(unittest.TestCase):
 

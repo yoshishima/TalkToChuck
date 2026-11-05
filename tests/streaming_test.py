@@ -5788,7 +5788,7 @@ class StreamClientTest(IsolatedAsyncioTestCase):
                     await self.client._receive()
                 self.assertEqual(raw, raised.exception.raw_msg)
                 self.assertIsInstance(raised.exception.__cause__, error)
-                self.assertIn(repr(raw), str(raised.exception))
+                self.assertNotIn(repr(raw), str(raised.exception))
         self.client._socket.recv.return_value = b'{"notify": []}'
         self.assertEqual({'notify': []}, await self.client._receive())
 

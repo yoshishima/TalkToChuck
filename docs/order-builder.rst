@@ -204,8 +204,12 @@ process looks like this:
 
   # Notice we don't prefix this with "python" because this is a script that was 
   # installed by pip when you installed tda-api
-  schwab-order-codegen.py --token_file <your token file path> --api_key <your 
-  API key>
+  schwab-order-codegen.py --token_file <your token file path> --api_key <your API key> --app_secret <your app secret>
+
+When multiple orders are returned, the script selects the latest timezone-aware
+``enteredTime`` and uses the order ID to break ties. It reports an error rather
+than guessing if a timestamp needed for the comparison is missing or invalid.
+Treat command-line credentials and shell history as sensitive.
 
 3. Copy-paste the resulting code and adapt it to your needs.
 
@@ -571,7 +575,10 @@ verbatim, including internal padding in option symbols.
 ``Decimal`` prices are accepted by ``set_price`` and ``set_stop_price`` without
 the float deprecation warning and follow the same truncation rules. Decimal
 prices passed through ``copy_price`` or ``copy_stop_price`` retain all digits
-as strings. Nonfinite Decimal inputs are rejected.
+as strings. Nonfinite Decimal inputs are rejected. Numeric price formatting is
+independent of the caller's Decimal precision and rounding traps. Inputs
+requiring more than 10,000 digits of formatting precision raise ``ValueError``
+to prevent unbounded allocation.
 
 Decimal quantities are accepted, subject to the existing positive and
 whole-option-contract checks. At build time, integral values become integers;

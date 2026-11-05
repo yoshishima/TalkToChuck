@@ -67,6 +67,21 @@ class LoginRefreshTest(unittest.IsolatedAsyncioTestCase):
 
 
 class LoggingPrivacyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_debug_log_redacts_nested_sensitive_objects(self):
+        marker = 'synthetic-private-credential'
+        socket = AsyncMock()
+        socket.recv.return_value = json.dumps({'data': [{
+            'service': 'SYNTHETIC',
+            'authentication': {'credential': {'value': marker}},
+        }]})
+        client = streaming.StreamClient(Mock())
+        client._socket = socket
+        with patch.object(schwab, 'LOG_REDACTOR', debug.LogRedactor()), \
+                self.assertLogs('schwab.streaming', level=logging.DEBUG) as logs:
+            await client._receive()
+        self.assertNotIn(marker, '\n'.join(logs.output))
+        self.assertIn('REDACTED', '\n'.join(logs.output))
+
     async def test_sensitive_arrays_inherit_their_field_names(self):
         payload = {'accountNumbers': ['private-first', ['private-second']],
                    'requestId': ['public-request']}

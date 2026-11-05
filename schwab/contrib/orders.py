@@ -129,6 +129,8 @@ def code_for_builder(builder, var_name=None):
     :param builder: :class:`~schwab.orders.generic.OrderBuilder` to generate.
     :param var_name: If set, emit code that assigns the builder to a variable
                      with this name.
+    Numeric prices retain their numeric-price behavior when the generated
+    builder is built or modified.
     :raises UnrepeatableOrderError: If children cannot be represented by the
                                     supported TRIGGER/OCO helpers, or are not
                                     OrderBuilder instances.
@@ -191,14 +193,18 @@ class OneCancelsOtherAST:
 
 
 class FieldAST:
-    def __init__(self, setter_name, enum_type, value):
+    def __init__(self, setter_name, enum_type, value, *, numeric_price=False):
         self.setter_name = setter_name
         self.enum_type = enum_type
         self.value = value
+        self.numeric_price = numeric_price
 
     def render(self, imports, lines, paren_depth=0):
         value = self.value
-        if self.enum_type:
+        if self.numeric_price:
+            imports['decimal'].add('Decimal')
+            value = 'Decimal({!r})'.format(value)
+        elif self.enum_type:
             imports[self.enum_type.__module__].add(self.enum_type.__qualname__)
             value = self.enum_type.__qualname__ + '.' + value
         elif isinstance(value, str):
@@ -237,7 +243,12 @@ class GenericBuilderAST:
         for name, setter, enum_type in sorted(_FIELDS_AND_SETTERS):
             value = getattr(builder, '_'+name)
             if value is not None:
-                self.top_level_fields.append(FieldAST(setter, enum_type, value))
+                numeric_price = name in builder._numeric_prices
+                if numeric_price:
+                    setter = {'price': 'set_price',
+                              'stopPrice': 'set_stop_price'}[name]
+                self.top_level_fields.append(FieldAST(
+                    setter, enum_type, value, numeric_price=numeric_price))
 
         for leg in builder._orderLegCollection or []:
             if leg['instrument']._assetType == 'EQUITY':

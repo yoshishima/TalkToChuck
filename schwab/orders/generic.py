@@ -1,12 +1,16 @@
 import math
 import warnings
+from contextlib import contextmanager
 
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN
+from decimal import (Decimal, Inexact, InvalidOperation, MAX_EMAX, MIN_EMIN,
+                     ROUND_DOWN, ROUND_HALF_EVEN, Rounded, localcontext)
 
 from schwab.orders import common
 from schwab.utils import EnumEnforcer
 
 import httpx2 as httpx
+
+_MAX_PRICE_PRECISION = 10_000
 
 
 def _is_finite_number(value):
@@ -73,31 +77,49 @@ def truncate_float(flt):
     return _format_numeric_price(flt)
 
 
-def _format_numeric_price(flt):
+@contextmanager
+def _price_decimal_context(value):
+    # Price truncation is deliberate and must not depend on an application's
+    # Decimal precision, rounding mode, or inexact/rounded traps.
+    required_precision = max(28, len(value.as_tuple().digits) + 5,
+                             value.adjusted() + 6)
+    if required_precision > _MAX_PRICE_PRECISION:
+        raise ValueError('price is too large to format')
+    with localcontext() as context:
+        context.prec = required_precision
+        context.Emax = MAX_EMAX
+        context.Emin = MIN_EMIN
+        context.traps[Inexact] = False
+        context.traps[Rounded] = False
+        context.traps[InvalidOperation] = True
+        yield
 
+
+def _format_numeric_price(flt):
     value = Decimal(str(flt))
     if not value.is_finite():
         raise ValueError('price must be finite')
 
-    decimal_places = 4 if abs(value) < 1 and value != 0 else 2
-    quantum = Decimal(1).scaleb(-decimal_places)
-    if isinstance(flt, float):
-        nearest = value.quantize(quantum, rounding=ROUND_HALF_EVEN)
-        # Recover tick boundaries obscured by float arithmetic. Never snap
-        # to zero: nonzero prices below our precision must be rejected.
-        if nearest != 0 and abs(value - nearest) <= Decimal('1e-9'):
-            value = nearest
-            decimal_places = 4 if abs(value) < 1 else 2
-            quantum = Decimal(1).scaleb(-decimal_places)
-    truncated = value.quantize(quantum, rounding=ROUND_DOWN)
+    with _price_decimal_context(value):
+        decimal_places = 4 if abs(value) < 1 and value != 0 else 2
+        quantum = Decimal(1).scaleb(-decimal_places)
+        if isinstance(flt, float):
+            nearest = value.quantize(quantum, rounding=ROUND_HALF_EVEN)
+            # Recover tick boundaries obscured by float arithmetic. Never snap
+            # to zero: nonzero prices below our precision must be rejected.
+            if nearest != 0 and abs(value - nearest) <= Decimal('1e-9'):
+                value = nearest
+                decimal_places = 4 if abs(value) < 1 else 2
+                quantum = Decimal(1).scaleb(-decimal_places)
+        truncated = value.quantize(quantum, rounding=ROUND_DOWN)
 
-    if value != 0 and truncated.is_zero():
-        raise ValueError('nonzero price must not truncate to zero')
+        if value != 0 and truncated.is_zero():
+            raise ValueError('nonzero price must not truncate to zero')
 
-    # Normalize explicitly supplied negative zero.
-    if truncated.is_zero():
-        truncated = abs(truncated)
-    return format(truncated, f'.{decimal_places}f')
+        # Normalize explicitly supplied negative zero.
+        if truncated.is_zero():
+            truncated = abs(truncated)
+        return format(truncated, f'.{decimal_places}f')
 
 
 class OrderBuilder(EnumEnforcer):
@@ -600,7 +622,8 @@ class OrderBuilder(EnumEnforcer):
             return
         for field in self._numeric_prices:
             value = Decimal(order[field])
-            truncated = value.quantize(Decimal('0.01'), rounding=ROUND_DOWN)
+            with _price_decimal_context(value):
+                truncated = value.quantize(Decimal('0.01'), rounding=ROUND_DOWN)
             if value != 0 and truncated.is_zero():
                 raise ValueError('nonzero option price must not truncate to zero')
             order[field] = format(truncated, '.2f')

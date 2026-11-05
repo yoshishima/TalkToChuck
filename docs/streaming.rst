@@ -79,6 +79,13 @@ this happens successfully, all stream operations can be performed. Attemping to
 perform operations that require login before this function is called raises an
 exception.
 
+Login retrieves user preferences through the supplied HTTP client. An async HTTP
+client avoids blocking the event loop. For a synchronous client, login runs that
+lookup on the event-loop thread by default. Applications whose synchronous client,
+session and token callbacks are safe to call from a worker thread may instead use
+``StreamClient(client, offload_sync_preferences=True)``. Canceling login does not
+stop a synchronous request that is already running in that worker thread.
+
 .. automethod:: schwab.streaming.StreamClient.login
 
 
@@ -594,10 +601,14 @@ Account Activity
 Malformed messages and buffer limits
 ++++++++++++++++++++++++++++++++++++
 
-Invalid JSON is delivered as ``UnparsableMessage`` by ``handle_message()`` in
-message order. It does not fail pending subscription acknowledgements; the
-reader continues processing the connection. Data and notification entries
-without a valid service are logged and skipped individually.
+Invalid JSON and invalid top-level stream envelopes are delivered as
+``UnparsableMessage`` by ``handle_message()`` in message order. The exception's
+``raw_msg`` attribute retains the original frame for diagnostics and may contain
+sensitive data; the exception message does not include the frame. Malformed
+messages do not fail pending subscription acknowledgements; the reader continues
+processing the connection. A request with no valid acknowledgement still times
+out according to ``response_timeout``. Data and notification entries without a
+valid service are logged and skipped individually.
 
 ``StreamClient(max_pending_messages=1000)`` limits queued incoming messages,
 including parse-error markers, while acknowledgements are outstanding. The
