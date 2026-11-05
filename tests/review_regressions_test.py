@@ -464,7 +464,10 @@ class StreamLifecycleTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(asynchronous=asynchronous):
                 self.client = StreamClient(self.http_client)
                 self.buffer_messages(1)
-                original = copy.deepcopy(self.client._overflow_items[0])
+                # Keep the queued wire message itself, plus a snapshot, so
+                # the final assertion can detect mutation of the original.
+                wire = self.client._overflow_items[0]
+                original = copy.deepcopy(wire)
                 seen = []
 
                 def mutate(msg):
@@ -481,7 +484,8 @@ class StreamLifecycleTest(unittest.IsolatedAsyncioTestCase):
                 await self.client.handle_message()
                 await asyncio.gather(*self.client._handler_tasks)
                 self.assertEqual(seen, [123.45])
-                self.assertEqual(original['data'][0]['content'][0]['5'], 123.45)
+                self.assertEqual(original, wire)
+                self.assertEqual(wire['data'][0]['content'][0]['5'], 123.45)
                 await self.client._close_connection()
 
 

@@ -2198,7 +2198,7 @@ class _TestClient:
             self.client_class.MarketHours.Market.EQUITY)
         self.mock_session.get.assert_called_once_with(
             self.make_url('/marketdata/v1/markets'), params={
-                'markets': ['equity']})
+                'markets': 'equity'})
 
 
     def test_get_market_hours_market_list(self):
@@ -2207,7 +2207,7 @@ class _TestClient:
                  self.client_class.MarketHours.Market.OPTION])
         self.mock_session.get.assert_called_once_with(
             self.make_url('/marketdata/v1/markets'), params={
-                'markets': ['equity', 'option']})
+                'markets': 'equity,option'})
 
 
     def test_get_market_hours_market_unchecked(self):
@@ -2215,7 +2215,7 @@ class _TestClient:
         self.client.get_market_hours(['not-a-market'])
         self.mock_session.get.assert_called_once_with(
             self.make_url('/marketdata/v1/markets'), params={
-                'markets': ['not-a-market']})
+                'markets': 'not-a-market'})
 
 
     def test_get_market_hours_date(self):
@@ -2224,7 +2224,7 @@ class _TestClient:
                 date=NOW_DATE)
         self.mock_session.get.assert_called_once_with(
             self.make_url('/marketdata/v1/markets'), params={
-                'markets': ['equity'],
+                'markets': 'equity',
                 'date': NOW_DATE_ISO})
 
 

@@ -222,6 +222,10 @@ class ClientFromLoginFlowTest(unittest.TestCase):
     def test_start_on_port_443(
             self, mock_webbrowser_get, async_session, sync_session, client):
         callback_url = 'https://127.0.0.1/callback'
+        # The authorization context is created before the server starts.
+        sync_session.return_value = sync_session
+        sync_session.create_authorization_url.return_value = (
+                'https://auth.url.com', None)
 
         with self.assertRaisesRegex(auth.RedirectServerExitedError,
                                     'callback URL without a port number'):
@@ -342,6 +346,12 @@ class CallbackProcessContextTest(unittest.TestCase):
                 patch('schwab.auth.secrets.token_urlsafe',
                       return_value='synthetic-readiness'), \
                 patch('schwab.auth.psutil.Process') as cleanup, \
+                patch('schwab.auth.get_auth_context',
+                      return_value=auth.AuthContext(
+                          'https://127.0.0.1:8182/oauth%20callback;v1',
+                          'https://synthetic.invalid/authorize',
+                          'synthetic-state')), \
+                patch('schwab.auth._check_token_path_writable'), \
                 patch('schwab.auth._wait_for_callback_server',
                       side_effect=auth.RedirectServerExitedError(
                           'stop before authentication')) as wait_for_server:
@@ -361,7 +371,7 @@ class CallbackProcessContextTest(unittest.TestCase):
             context.Process.assert_called_once_with(
                 target=getattr(auth, '__run_client_from_login_flow_server'),
                 args=(queue, 8182, '/oauth callback;v1',
-                      'synthetic-readiness'))
+                      'synthetic-readiness', 'synthetic-state'))
             server.start.assert_called_once_with()
             wait_for_server.assert_called_once_with(
                 server, 8182, 'synthetic-readiness')
@@ -1019,7 +1029,8 @@ class TokenMetadataTest(unittest.TestCase):
 
     @no_duplicates
     def test_from_loaded_token(self):
-        token = {'token': 'yes', 'creation_timestamp': TOKEN_CREATION_TIMESTAMP}
+        token = {'token': {'access_token': 'yes'},
+                 'creation_timestamp': TOKEN_CREATION_TIMESTAMP}
 
         metadata = auth.TokenMetadata.from_loaded_token(
                 token, unwrapped_token_write_func=None)
@@ -1028,7 +1039,8 @@ class TokenMetadataTest(unittest.TestCase):
 
     @no_duplicates
     def test_wrapped_token_write_func_updates_stored_token(self):
-        token = {'token': 'yes', 'creation_timestamp': TOKEN_CREATION_TIMESTAMP}
+        token = {'token': {'access_token': 'yes'},
+                 'creation_timestamp': TOKEN_CREATION_TIMESTAMP}
 
         updated = [False]
         def update_token(token):
@@ -1054,7 +1066,8 @@ class TokenMetadataTest(unittest.TestCase):
     @no_duplicates
     @patch('time.time', MagicMock(return_value=MOCK_NOW))
     def test_token_age(self):
-        token = {'token': 'yes', 'creation_timestamp': TOKEN_CREATION_TIMESTAMP}
+        token = {'token': {'access_token': 'yes'},
+                 'creation_timestamp': TOKEN_CREATION_TIMESTAMP}
 
         metadata = auth.TokenMetadata.from_loaded_token(
                 token, unwrapped_token_write_func=None)

@@ -252,10 +252,12 @@ class OrderBuilderTest(unittest.TestCase):
 
     @no_duplicates
     def test_stop_price_negative(self):
-        self.order_builder.set_stop_price(-1.31)
-        self.assertFalse(has_diff({
-            'stopPrice': '-1.31'
-        }, self.order_builder.build()))
+        # Credits are expressed with NET_CREDIT and a positive price.
+        for value in (-1.31, Decimal('-1.31'), -1):
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, 'must not be negative'):
+                self.order_builder.set_stop_price(value)
+        self.assertNotIn('stopPrice', self.order_builder.build())
 
     @no_duplicates
     def test_stop_price_zero(self):
@@ -477,10 +479,12 @@ class OrderBuilderTest(unittest.TestCase):
 
     @no_duplicates
     def test_price_negative(self):
-        self.order_builder.set_price(-1.23)
-        self.assertFalse(has_diff({
-            'price': '-1.23'
-        }, self.order_builder.build()))
+        # Credits are expressed with NET_CREDIT and a positive price.
+        for value in (-1.23, Decimal('-1.23'), -1):
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, 'must not be negative'):
+                self.order_builder.set_price(value)
+        self.assertNotIn('price', self.order_builder.build())
 
     @no_duplicates
     def test_price_zero(self):

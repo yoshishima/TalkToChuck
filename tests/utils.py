@@ -6,6 +6,11 @@ import difflib
 import inspect
 import httpx2 as httpx
 import json
+import os
+
+# Resolve fixtures relative to this file so tests can run from any directory.
+PREFERENCES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'testdata', 'preferences.json')
 
 class AnyStringWith(str):
     '''
@@ -16,7 +21,7 @@ class AnyStringWith(str):
         return self in other
 
 def account_preferences():
-    with open('tests/testdata/preferences.json', 'r') as f:
+    with open(PREFERENCES_PATH, 'r') as f:
         return json.load(f)
 
 

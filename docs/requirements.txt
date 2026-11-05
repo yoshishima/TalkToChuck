@@ -1,7 +1,6 @@
 # Note this requirements file is only used by sphinx. For regular installations, 
 # see the setup.py file.
 authlib>=1.9.4
-certifi>=2026.10.23
 Flask>=3.1.3
 httpx2>=2.16.0
 multiprocess>=0.70.19

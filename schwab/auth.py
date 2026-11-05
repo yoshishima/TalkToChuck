@@ -5,6 +5,7 @@ import asyncio as asyncio_module
 import contextlib
 import httpx2 as httpx
 import json
+import math
 import multiprocess
 import os
 import psutil
@@ -13,10 +14,9 @@ import secrets
 import stat
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
-import urllib3
-import warnings
 import webbrowser
 
 from schwab.client import AsyncClient, Client
@@ -55,6 +55,7 @@ def __make_update_token_func(token_path):
             os.replace(temporary_path, resolved_token_path)
             os.chmod(
                     resolved_token_path, stat.S_IRUSR | stat.S_IWUSR)
+            _fsync_directory(token_dir)
         except Exception:
             if fd is not None:
                 os.close(fd)
@@ -65,6 +66,40 @@ def __make_update_token_func(token_path):
             raise
     update_token._schwab_file_writer = True
     return update_token
+
+
+def _fsync_directory(path):
+    '''Persist a rename on POSIX filesystems. Best effort: some filesystems
+    and platforms (including Windows) do not support syncing directories.'''
+    if os.name != 'posix':
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _check_token_path_writable(token_path):
+    '''Fail before an interactive login if the token cannot be saved.
+
+    The authorization code can only be exchanged once, so a token that cannot
+    be written after the exchange is lost and the login must be repeated.
+    '''
+    directory = os.path.dirname(os.path.realpath(os.path.abspath(token_path)))
+    try:
+        fd, probe = tempfile.mkstemp(dir=directory, prefix='.schwab-token-check-')
+    except OSError as e:
+        e.add_note('schwab-py checks that token_path {!r} can be written before '
+                   'starting the login flow.'.format(token_path))
+        raise
+    os.close(fd)
+    os.unlink(probe)
 
 
 def __token_loader(token_path):
@@ -111,10 +146,24 @@ class TokenMetadata:
         the loaded token object. If the token has a legacy format which contains
         no metadata, assign default values.
         '''
+        if not isinstance(token, dict):
+            raise ValueError(
+                    'The token must be a JSON object; the token file is '
+                    'corrupted. Please delete it and create a new one.')
         if 'creation_timestamp' not in token:
             raise ValueError(
                     'WARNING: The token format has changed since this token '+
                     'was created. Please delete it and create a new one.')
+        creation_timestamp = token['creation_timestamp']
+        if (type(creation_timestamp) not in (int, float)
+                or not math.isfinite(creation_timestamp)):
+            raise ValueError(
+                    'The token creation_timestamp must be a number; the token '
+                    'file is corrupted. Please delete it and create a new one.')
+        if not isinstance(token.get('token'), dict):
+            raise ValueError(
+                    'The token is missing its OAuth token object; the token '
+                    'file is corrupted. Please delete it and create a new one.')
 
         return TokenMetadata(
                 token['token'],
@@ -191,16 +240,40 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
         session_class = OAuth2Client
         client_class = Client
 
+    session = session_class(api_key,
+                            client_secret=app_secret,
+                            token=metadata.token,
+                            token_endpoint=TOKEN_ENDPOINT,
+                            update_token=update_token,
+                            leeway=300)
+    if not asyncio:
+        _serialize_sync_token_refresh(session)
+
     return client_class(
         api_key,
-        session_class(api_key,
-                      client_secret=app_secret,
-                      token=metadata.token,
-                      token_endpoint=TOKEN_ENDPOINT,
-                      update_token=update_token,
-                      leeway=300),
+        session,
         token_metadata=metadata,
         enforce_enums=enforce_enums)
+
+
+def _serialize_sync_token_refresh(session):
+    '''Let only one thread at a time check and refresh a synchronous token.
+
+    Authlib serializes refreshes for its async client but not for its sync
+    client, so threads sharing one client could each refresh an expiring token
+    and persist the results out of order. Waiting threads re-check the
+    session's current token, so only the first one refreshes.
+    '''
+    ensure_active_token = session.ensure_active_token
+    # Re-entrant: a custom token writer may itself call the API.
+    lock = threading.RLock()
+
+    def serialized_ensure_active_token(token=None):
+        with lock:
+            return ensure_active_token(session.token)
+
+    session.ensure_active_token = serialized_ensure_active_token
+    return session
 
 
 ################################################################################
@@ -243,7 +316,8 @@ def _run_callback_server(app, callback_port):
 
 # This runs in a separate process and is invisible to coverage
 def __run_client_from_login_flow_server(
-        q, callback_port, callback_path, readiness_token):  # pragma: no cover
+        q, callback_port, callback_path, readiness_token,
+        expected_state=None):  # pragma: no cover
     '''Helper server for intercepting redirects to the callback URL. See
     client_from_login_flow for details.'''
 
@@ -253,6 +327,13 @@ def __run_client_from_login_flow_server(
 
     @app.route(callback_path)
     def handle_token():
+        # Schwab echoes the OAuth state on success and error redirects alike.
+        # Ignore anything else, such as a stray local request, so it cannot
+        # end the login flow before the real redirect arrives.
+        if not _state_matches(flask.request.args.get('state'), expected_state):
+            return ('schwab-py ignored a request without the expected OAuth '
+                    'state. Finish logging in from the browser window that '
+                    'schwab-py opened.', 400)
         q.put(flask.request.url)
         return 'schwab-py callback received! You may now close this window/tab.'
 
@@ -273,6 +354,15 @@ def __run_client_from_login_flow_server(
         sys.stdout = devnull
         _run_callback_server(app, callback_port)
         sys.stdout = old_stdout
+
+
+def _state_matches(received_state, expected_state):
+    if expected_state is None:
+        return True
+    if received_state is None:
+        return False
+    return secrets.compare_digest(received_state.encode('utf-8'),
+                                  expected_state.encode('utf-8'))
 
 
 class RedirectTimeoutError(Exception):
@@ -311,16 +401,13 @@ def _wait_for_callback_server(server, callback_port, readiness_token):
                     'to start on port {}.'.format(callback_port))
 
         try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                        'ignore',
-                        category=urllib3.exceptions.InsecureRequestWarning)
-
-                response = httpx.get(
-                        'https://127.0.0.1:{}/schwab-py-internal/status'.format(
-                            callback_port),
-                        verify=False,
-                        timeout=min(_CALLBACK_SERVER_PROBE_TIMEOUT, remaining))
+            # The callback server uses a self-signed certificate. Its identity
+            # is proven by the readiness token instead of TLS verification.
+            response = httpx.get(
+                    'https://127.0.0.1:{}/schwab-py-internal/status'.format(
+                        callback_port),
+                    verify=False,
+                    timeout=min(_CALLBACK_SERVER_PROBE_TIMEOUT, remaining))
         except (httpx.ConnectError, httpx.TimeoutException):
             time.sleep(_CALLBACK_SERVER_POLL_INTERVAL)
             continue
@@ -435,6 +522,13 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     callback_port = parsed.port if parsed.port else 443
     callback_path = _get_callback_path(parsed.path)
 
+    if token_write_func is None:
+        _check_token_path_writable(token_path)
+
+    # Create the authorization state first so the callback server can ignore
+    # requests that do not carry it.
+    auth_context = get_auth_context(api_key, callback_url)
+
     # Forking a multithreaded process is unsafe on macOS. Use a local
     # spawn context without changing the application's global start method.
     process_context = (multiprocess.get_context('spawn')
@@ -445,7 +539,7 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     server = process_context.Process(
             target=__run_client_from_login_flow_server,
             args=(output_queue, callback_port, callback_path,
-                  readiness_token))
+                  readiness_token, auth_context.state))
 
     # Context manager to kill the server upon completion
     @contextlib.contextmanager
@@ -466,8 +560,6 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
                 server, callback_port, readiness_token)
 
         # Open the browser
-        auth_context = get_auth_context(api_key, callback_url)
-
         print()
         print('***********************************************************************')
         print()
@@ -503,12 +595,12 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
         controller = webbrowser.get(requested_browser)
         controller.open(auth_context.authorization_url)
 
-        # Wait for a response
-        now = __TIME_TIME()
-        timeout_time = now + callback_timeout
+        # Wait for a response. A monotonic clock keeps system clock
+        # adjustments from shortening or extending the wait.
+        timeout_time = time.monotonic() + callback_timeout
         received_url = None
         while True:
-            now = __TIME_TIME()
+            now = time.monotonic()
             if now >= timeout_time:
                 if callback_timeout == 0:
                     # XXX: We're detecting a test environment here to avoid an 
@@ -617,6 +709,9 @@ def client_from_manual_flow(api_key, app_secret, callback_url, token_path,
     get_logger().info('Creating new token with callback URL \'%s\' ' +
                        'and token path \'%s\'', callback_url, token_path)
 
+    if token_write_func is None:
+        _check_token_path_writable(token_path)
+
     auth_context = get_auth_context(api_key, callback_url)
 
     print('\n**************************************************************\n')
@@ -724,9 +819,12 @@ AuthContext = collections.namedtuple(
 
 def get_auth_context(api_key, callback_url, state=None):
     oauth = OAuth2Client(api_key, redirect_uri=callback_url)
-    authorization_url, state = oauth.create_authorization_url(
-        'https://api.schwabapi.com/v1/oauth/authorize',
-        state=state)
+    try:
+        authorization_url, state = oauth.create_authorization_url(
+            'https://api.schwabapi.com/v1/oauth/authorize',
+            state=state)
+    finally:
+        oauth.close()
 
     return AuthContext(callback_url, authorization_url, state)
 
@@ -738,12 +836,14 @@ def client_from_received_url(
     #      OAuth2Client created in get_auth_context cannot be passed around. 
     #      Instead, we reconstruct it here.
     oauth = OAuth2Client(api_key, redirect_uri=auth_context.callback_url)
-
-    token = oauth.fetch_token(
-        TOKEN_ENDPOINT,
-        authorization_response=received_url,
-        client_id=api_key, auth=(api_key, app_secret),
-        state=auth_context.state)
+    try:
+        token = oauth.fetch_token(
+            TOKEN_ENDPOINT,
+            authorization_response=received_url,
+            client_id=api_key, auth=(api_key, app_secret),
+            state=auth_context.state)
+    finally:
+        oauth.close()
 
     # Don't emit token details in debug logs
     register_redactions(token)
@@ -852,6 +952,11 @@ def easy_client(api_key, app_secret, callback_url, token_path, asyncio=False,
 
         if max_token_age > 0 and c.token_age() >= max_token_age:
             logger.info('token too old, proactively creating a new one')
+            if not asyncio:
+                # Release the unused client's connection pool. An async
+                # session has made no requests yet and cannot be awaited
+                # from this synchronous function.
+                c.session.close()
             c = None
 
     # Return early on success
@@ -864,7 +969,7 @@ def easy_client(api_key, app_secret, callback_url, token_path, asyncio=False,
                                     token_path, asyncio=asyncio,
                                     enforce_enums=enforce_enums)
         logger.info(
-            'Returning client fetched using manual flow, writing' +
+            'Returning client fetched using manual flow, writing ' +
             'token to \'%s\'', token_path)
     else:
         c = client_from_login_flow(
@@ -873,7 +978,7 @@ def easy_client(api_key, app_secret, callback_url, token_path, asyncio=False,
             requested_browser=requested_browser, interactive=interactive)
 
         logger.info(
-            'Returning client fetched using web browser, writing' +
+            'Returning client fetched using web browser, writing ' +
             'token to \'%s\'', token_path)
 
     return c

@@ -7,6 +7,7 @@ import copy
 import httpx2 as httpx
 import inspect
 import json
+import math
 import warnings
 
 from websockets.asyncio import client as ws_client
@@ -19,8 +20,8 @@ class StreamJsonDecoder(ABC):
     @abstractmethod
     def decode_json_string(self, raw):
         '''
-        Parse a JSON-formatted string into a proper object. Raises
-        ``JSONDecodeError`` on parse failure.
+        Parse a JSON-formatted string into a proper object. Any exception
+        raised here is reported to consumers as :class:`UnparsableMessage`.
         '''
         raise NotImplementedError()
 
@@ -34,6 +35,42 @@ def get_logger():
     return get_redacted_logger(__name__)
 
 
+_JSON_ATOMIC_TYPES = frozenset((str, int, float, bool, type(None)))
+
+
+def _json_clone(obj):
+    '''Deep-copy a decoded JSON tree.
+
+    Exact ``dict`` and ``list`` instances are rebuilt directly; everything else
+    (dict or list subclasses, tuples, ``Decimal``, custom objects) is copied
+    with :func:`copy.deepcopy`, so values from custom decoders keep its
+    semantics. Unlike ``deepcopy``, objects shared within one message are copied
+    separately; ``json.loads`` never shares objects.
+    '''
+    cls = type(obj)
+    if cls is dict:
+        return {key: value if type(value) in _JSON_ATOMIC_TYPES
+                else _json_clone(value)
+                for key, value in obj.items()}
+    if cls is list:
+        return [value if type(value) in _JSON_ATOMIC_TYPES
+                else _json_clone(value)
+                for value in obj]
+    if cls in _JSON_ATOMIC_TYPES:
+        return obj
+    return copy.deepcopy(obj)
+
+
+def _copy_message(message):
+    '''Independent deep copy of a message for one handler.'''
+    try:
+        return _json_clone(message)
+    except RecursionError:
+        # Cyclic structures can only come from custom decoders; deepcopy
+        # handles them.
+        return copy.deepcopy(message)
+
+
 class _BaseFieldEnum(Enum):
     @classmethod
     def all_fields(cls):
@@ -41,13 +78,13 @@ class _BaseFieldEnum(Enum):
 
     @classmethod
     def key_mapping(cls):
-        try:
-            return cls._key_mapping
-        except AttributeError:
-            cls._key_mapping = dict(
-                (str(enum.value), enum.name)
-                for enum in cls)
-            return cls._key_mapping
+        # Read the cache from this class only. An inherited value would be
+        # the mapping of a different enum.
+        mapping = cls.__dict__.get('_key_mapping')
+        if mapping is None:
+            mapping = {str(enum.value): enum.name for enum in cls}
+            cls._key_mapping = mapping
+        return mapping
 
     @classmethod
     def relabel_message(cls, old_msg, new_msg):
@@ -57,6 +94,28 @@ class _BaseFieldEnum(Enum):
             if old_key in key_mapping:
                 new_key = key_mapping[old_key]
                 new_msg[new_key] = new_msg.pop(old_key)
+
+    @classmethod
+    def relabeled_copy(cls, entry):
+        '''Deep copy of a plain ``dict`` entry with numeric keys renamed.
+
+        Produces the same keys, values and key order as deep-copying and then
+        calling :meth:`relabel_message`: unmapped keys keep their order and are
+        followed by renamed keys in their original order.
+        '''
+        key_mapping = cls.key_mapping()
+        unmapped = {}
+        mapped = {}
+        for key, value in entry.items():
+            if type(value) not in _JSON_ATOMIC_TYPES:
+                value = _json_clone(value)
+            new_key = key_mapping.get(key)
+            if new_key is None:
+                unmapped[key] = value
+            else:
+                mapped[new_key] = value
+        unmapped.update(mapped)
+        return unmapped
 
 
 class UnexpectedResponse(Exception):
@@ -95,14 +154,43 @@ class _Handler:
         return self._func(*args, **kwargs)
 
     def label_message(self, msg):
-        if 'content' in msg:
-            new_msg = copy.deepcopy(msg)
-            for idx in range(len(msg['content'])):
-                self._field_enum_type.relabel_message(msg['content'][idx],
-                                                      new_msg['content'][idx])
-            return new_msg
-        else:
+        '''Return a relabeled deep copy, leaving ``msg`` untouched so that a
+        cancelled dispatch can resume from the original message.'''
+        if 'content' not in msg:
             return msg
+        if type(msg) is dict and type(msg['content']) is list:
+            try:
+                return self._relabeled_json_copy(msg)
+            except RecursionError:
+                pass
+        # Custom container types, unusual content shapes and cyclic messages
+        # keep the original deepcopy-then-relabel behaviour.
+        new_msg = copy.deepcopy(msg)
+        for idx in range(len(msg['content'])):
+            self._field_enum_type.relabel_message(msg['content'][idx],
+                                                  new_msg['content'][idx])
+        return new_msg
+
+    def _relabeled_json_copy(self, msg):
+        # Copy and relabel in one pass instead of deep-copying first.
+        field_enum = self._field_enum_type
+        new_msg = {}
+        for key, value in msg.items():
+            if key == 'content':
+                new_content = []
+                for entry in value:
+                    if type(entry) is dict:
+                        new_content.append(field_enum.relabeled_copy(entry))
+                    else:
+                        entry_copy = _json_clone(entry)
+                        field_enum.relabel_message(entry, entry_copy)
+                        new_content.append(entry_copy)
+                new_msg[key] = new_content
+            elif type(value) in _JSON_ATOMIC_TYPES:
+                new_msg[key] = value
+            else:
+                new_msg[key] = _json_clone(value)
+        return new_msg
 
 
 class _PendingMessage(dict):
@@ -135,6 +223,14 @@ class StreamClient(EnumEnforcer):
         if (type(max_pending_handler_tasks) is not int
                 or max_pending_handler_tasks <= 0):
             raise ValueError('max_pending_handler_tasks must be a positive int')
+
+        if response_timeout is not None and (
+                type(response_timeout) not in (int, float)
+                or not math.isfinite(response_timeout)
+                or response_timeout <= 0):
+            raise ValueError(
+                'response_timeout must be None or a positive, finite number '
+                'of seconds')
 
         if account_id is not None:
             warnings.warn(
@@ -211,35 +307,32 @@ class StreamClient(EnumEnforcer):
 
         await self._socket.send(json.dumps(obj))
 
-    async def _receive(self, *, from_overflow=True):
+    async def _receive(self):
+        '''Read and decode one frame from the socket. Buffered messages are
+        delivered by the reader loop, not here.'''
         if self._socket is None:
             raise ValueError(
                 'Socket not open. Did you forget to call login()?')
 
-        if from_overflow and self._overflow_items:
-            ret = self._overflow_items.popleft()
+        raw = await self._socket.recv()
+        try:
+            ret = self.json_decoder.decode_json_string(raw)
+        except Exception as e:
+            # Custom decoders may raise any exception type. Report every
+            # decoding failure the same way so the reader keeps running.
+            msg = ('Failed to parse stream message. The raw message is '
+                   'available in raw_msg and may contain sensitive data.')
+            raise UnparsableMessage(raw, e, msg) from e
 
-            self.logger.debug(
-                'Receive %s: Returning message from overflow: %s',
-                self.req_num(), LazyLog(lambda: redact_json(ret)))
-        else:
-            raw = await self._socket.recv()
-            try:
-                ret = self.json_decoder.decode_json_string(raw)
-            except (json.decoder.JSONDecodeError, UnicodeDecodeError) as e:
-                msg = ('Failed to parse stream message. The raw message is '
-                       'available in raw_msg and may contain sensitive data.')
-                raise UnparsableMessage(raw, e, msg) from e
+        error = self._envelope_error(ret)
+        if error is not None:
+            cause = ValueError(error)
+            raise UnparsableMessage(
+                raw, cause, 'Invalid stream message envelope') from cause
 
-            error = self._envelope_error(ret)
-            if error is not None:
-                cause = ValueError(error)
-                raise UnparsableMessage(
-                    raw, cause, 'Invalid stream message envelope') from cause
-
-            self.logger.debug(
-                'Receive %s: Returning message from stream: %s',
-                self.req_num(), LazyLog(lambda: redact_json(ret)))
+        self.logger.debug(
+            'Receive %s: Returning message from stream: %s',
+            self.req_num(), LazyLog(lambda: redact_json(ret)))
 
         return ret
 
@@ -383,6 +476,10 @@ class StreamClient(EnumEnforcer):
         if (not self._response_waiters and not self._has_message_waiters()
                 and task is not None and not task.done()
                 and task is not asyncio.current_task()):
+            # Cancelling a reader blocked in recv() must not lose or reorder
+            # frames. websockets 17.4 fixed a race where frames arriving in the
+            # same loop iteration as the cancellation could be misordered,
+            # which is why setup.py requires websockets>=17.4.
             task.cancel()
             try:
                 await task
@@ -439,7 +536,7 @@ class StreamClient(EnumEnforcer):
                     # Read acknowledgements even when data is queued. A
                     # cancelled consumer may restore older data during recv.
                     try:
-                        msg = await self._receive(from_overflow=False)
+                        msg = await self._receive()
                     except UnparsableMessage as exc:
                         # Preserve FIFO delivery without failing acknowledgement
                         # waiters. The next message consumer raises this marker.
@@ -527,15 +624,28 @@ class StreamClient(EnumEnforcer):
         if isinstance(symbols, str):
             symbols = [symbols]
 
-        parameters = {
-            'keys': ','.join(symbols)
-        }
-
         if field_type is not None:
             if fields is None:
                 fields = field_type.all_fields()
 
-            fields = sorted(self.convert_enum_iterable(fields, field_type))
+            fields = self.convert_enum_iterable(fields, field_type)
+            if not fields:
+                raise ValueError(
+                    'fields must not be empty; pass None to request all fields')
+            # Converted values are deduplicated so a required field that was
+            # also passed as a raw value is not requested twice.
+            fields = sorted(set(fields))
+
+        # Check the connection before formatting keys: some keys, such as the
+        # account activity key, only exist after login.
+        if self._socket is None:
+            raise ValueError(
+                'Socket not open. Did you forget to call login()?')
+
+        parameters = {
+            'keys': ','.join(symbols)
+        }
+        if field_type is not None:
             parameters['fields'] = ','.join(str(f) for f in fields)
 
         request, request_id = self._make_request(
@@ -602,7 +712,7 @@ class StreamClient(EnumEnforcer):
                 # so cancellation can safely resume a pending dispatch.
                 use_owned_message = owns_message and index == len(handlers) - 1
                 handler_message = (
-                    message if use_owned_message else copy.deepcopy(message))
+                    message if use_owned_message else _copy_message(message))
                 result = handler(handler_message)
                 if inspect.isawaitable(result):
                     task = asyncio.ensure_future(result)
@@ -758,6 +868,11 @@ class StreamClient(EnumEnforcer):
             r = await r
         if r.status_code != httpx.codes.OK:
             r.raise_for_status()
+            # Other 2xx codes (such as 204) carry no preferences to parse.
+            raise httpx.HTTPStatusError(
+                'Unexpected status code {} fetching user preferences'.format(
+                    r.status_code),
+                request=getattr(r, '_request', None), response=r)
         r = r.json()
 
         await self._init_from_preferences(
@@ -2022,32 +2137,41 @@ class StreamClient(EnumEnforcer):
 
     class _BookHandler(_Handler):
         def label_message(self, msg):
-            # Relabel top-level fields
+            # Relabel top-level fields. The result is a fresh copy whenever
+            # there is content to relabel, so nested levels can be relabeled
+            # in place below.
             new_msg = super().label_message(msg)
+            content = new_msg.get('content') if isinstance(new_msg, dict) else None
+            if not isinstance(content, list):
+                return new_msg
 
-            # Relabel bids
-            for content in new_msg['content']:
-                if 'BIDS' in content:
-                    for bid in content['BIDS']:
-                        # Relabel top-level bids
-                        StreamClient.BidFields.relabel_message(bid, bid)
-
-                        # Relabel per-exchange bids
-                        for e_bid in bid['BIDS']:
-                            StreamClient.PerExchangeBidFields.relabel_message(
-                                e_bid, e_bid)
-
-            # Relabel asks
-            for content in new_msg['content']:
-                if 'ASKS' in content:
-                    for ask in content['ASKS']:
-                        # Relabel top-level asks
-                        StreamClient.AskFields.relabel_message(ask, ask)
-
-                        # Relabel per-exchange bids
-                        for e_ask in ask['ASKS']:
-                            StreamClient.PerExchangeAskFields.relabel_message(
-                                e_ask, e_ask)
+            # Relabel the price levels and their per-exchange entries that
+            # are present. Partial levels are kept rather than dropping the
+            # whole message.
+            sides = (
+                ('BIDS', StreamClient.BidFields,
+                 StreamClient.PerExchangeBidFields),
+                ('ASKS', StreamClient.AskFields,
+                 StreamClient.PerExchangeAskFields),
+            )
+            for entry in content:
+                if not isinstance(entry, dict):
+                    continue
+                for side, level_fields, exchange_fields in sides:
+                    levels = entry.get(side)
+                    if not isinstance(levels, list):
+                        continue
+                    for level in levels:
+                        if not isinstance(level, dict):
+                            continue
+                        level_fields.relabel_message(level, level)
+                        exchanges = level.get(side)
+                        if not isinstance(exchanges, list):
+                            continue
+                        for exchange in exchanges:
+                            if isinstance(exchange, dict):
+                                exchange_fields.relabel_message(
+                                    exchange, exchange)
 
             return new_msg
 

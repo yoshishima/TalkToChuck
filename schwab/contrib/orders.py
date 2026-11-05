@@ -100,21 +100,58 @@ def construct_repeat_order(historical_order):
     # Order legs
     if 'orderLegCollection' in historical_order:
         for leg in historical_order['orderLegCollection']:
+            _validate_leg(leg)
             if leg['orderLegType'] == 'EQUITY':
                 builder.add_equity_leg(
-                        schwab.orders.common.EquityInstruction[leg['instruction']],
+                        _instruction(schwab.orders.common.EquityInstruction, leg),
                         leg['instrument']['symbol'],
                         leg['quantity'])
             elif leg['orderLegType'] == 'OPTION':
                 builder.add_option_leg(
-                        schwab.orders.common.OptionInstruction[leg['instruction']],
+                        _instruction(schwab.orders.common.OptionInstruction, leg),
                         leg['instrument']['symbol'],
                         leg['quantity'])
             else:
-                raise ValueError(
+                raise UnrepeatableOrderError(
                         'unknown orderLegType {}'.format(leg['orderLegType']))
 
     return builder
+
+
+# Leg fields that a rebuilt leg reproduces, or that only describe the
+# historical order (legId, positionEffect) and are recomputed by Schwab.
+_REPEATABLE_LEG_FIELDS = frozenset((
+    'orderLegType', 'legId', 'instrument', 'instruction', 'quantity',
+    'positionEffect', 'quantityType'))
+
+
+def _validate_leg(leg):
+    '''Refuse legs whose meaning a rebuilt leg would not preserve.'''
+    if not isinstance(leg, dict):
+        raise UnrepeatableOrderError('order legs must be dictionaries')
+    # Rebuilt legs always express quantity in shares or contracts. A dollar
+    # or all-shares quantity would silently become a share count.
+    quantity_type = leg.get('quantityType')
+    if quantity_type not in (None, 'SHARES'):
+        raise UnrepeatableOrderError(
+            'cannot repeat order leg with quantityType {!r}; only share '
+            'quantities can be reproduced'.format(quantity_type))
+    unsupported = sorted(
+        name for name, value in leg.items()
+        if name not in _REPEATABLE_LEG_FIELDS and value is not None)
+    if unsupported:
+        raise UnrepeatableOrderError(
+            'cannot repeat order leg with unsupported fields: {}'.format(
+                ', '.join(unsupported)))
+
+
+def _instruction(enum_class, leg):
+    try:
+        return enum_class[leg['instruction']]
+    except (KeyError, TypeError):
+        raise UnrepeatableOrderError(
+            'cannot repeat order leg with unsupported instruction {!r}'.format(
+                leg.get('instruction'))) from None
 
 
 ################################################################################

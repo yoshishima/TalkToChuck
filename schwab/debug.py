@@ -1,16 +1,32 @@
 import atexit
 from collections import defaultdict, deque
+import datetime
+from decimal import Decimal
+import enum
 import inspect
 import json
 import logging
+import re
 import sys
 import schwab
 
 
 _BUG_REPORT_LOGGING_ACTIVE = 0
 _DEFAULT_MAX_TRANSIENT_REDACTIONS = 10_000
+_DEFAULT_MAX_PERSISTENT_PER_LABEL = 32
 _DEFAULT_MAX_LOG_MESSAGES = 10_000
 _DEFAULT_MAX_LOG_CHARS = 10 * 1024 * 1024
+
+# Placeholders are written in two phases through characters from the
+# supplementary private-use planes, so a short registered string can never be
+# replaced again inside a placeholder that was already inserted.
+_SENTINEL_BASE = 0xF0000
+_SENTINEL_LIMIT = 0x10FFFD - _SENTINEL_BASE
+_SENTINEL_RE = re.compile('[\U000F0000-\U0010FFFF]')
+
+# Market-data words that contain "id" without being identifiers, such as
+# "bidPrice" or "midPrice". Removed before matching sensitive key patterns.
+_NON_IDENTIFIER_WORDS = ('bid', 'mid')
 
 
 def get_logger():
@@ -19,7 +35,13 @@ def get_logger():
 
 class _RedactingFilter(logging.Filter):
     def filter(self, record):
-        record.msg = schwab.LOG_REDACTOR.redact(record.getMessage())
+        try:
+            message = record.getMessage()
+        except Exception as e:
+            # Logging must never change program behaviour. Drop the
+            # unformattable arguments rather than emitting them unredacted.
+            message = '<unformattable log record: {}>'.format(type(e).__name__)
+        record.msg = schwab.LOG_REDACTOR.redact(message)
         record.args = ()
         if record.exc_info and not record.exc_text:
             record.exc_text = logging.Formatter().formatException(
@@ -57,7 +79,23 @@ def redact_json(payload):
         if isinstance(value, str):
             return schwab.LOG_REDACTOR.redact(redactor.redact(value))
         return value
-    return schwab.LOG_REDACTOR.redact(json.dumps(sanitize(payload), indent=4))
+    try:
+        text = json.dumps(sanitize(payload), indent=4, default=_log_default)
+    except (TypeError, ValueError, RecursionError) as e:
+        # Never let a debug log turn into an exception for the caller.
+        return '<unloggable payload: {}>'.format(type(e).__name__)
+    return schwab.LOG_REDACTOR.redact(text)
+
+
+def _log_default(value):
+    '''Render values json.dumps cannot serialize. Rendered values are strings,
+    so they still pass through string redaction.'''
+    if isinstance(value, (Decimal, datetime.date, datetime.time,
+                          datetime.timedelta)):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return str(value.value)
+    return '<{}>'.format(type(value).__name__)
 
 
 class LogRedactor:
@@ -66,11 +104,17 @@ class LogRedactor:
     placeholders.
     '''
 
-    def __init__(self, *, max_transient_entries=_DEFAULT_MAX_TRANSIENT_REDACTIONS):
+    def __init__(self, *, max_transient_entries=_DEFAULT_MAX_TRANSIENT_REDACTIONS,
+                 max_persistent_per_label=_DEFAULT_MAX_PERSISTENT_PER_LABEL):
         self.redacted_strings = {}
         self.label_counts = defaultdict(int)
         self.max_transient_entries = max_transient_entries
+        self.max_persistent_per_label = max_persistent_per_label
         self._persistent_strings = set()
+        # Persistent strings per label, oldest first. Each token refresh
+        # registers new tokens under the same labels, so only the most recent
+        # values are kept; superseded tokens have expired.
+        self._persistent_by_label = defaultdict(deque)
         self._sorted_redactions = None
         self._transient_limit_reached = False
 
@@ -85,8 +129,9 @@ class LogRedactor:
         if not string:
             return True
         if string in self.redacted_strings:
-            if persistent:
-                self._persistent_strings.add(string)
+            if persistent and string not in self._persistent_strings:
+                self._remember_persistent(
+                        string, self.redacted_strings[string][0])
             return True
 
         if (not persistent and
@@ -98,9 +143,19 @@ class LogRedactor:
         self.label_counts[label] += 1
         self.redacted_strings[string] = (label, self.label_counts[label])
         if persistent:
-            self._persistent_strings.add(string)
+            self._remember_persistent(string, label)
         self._sorted_redactions = None
         return True
+
+    def _remember_persistent(self, string, label):
+        self._persistent_strings.add(string)
+        history = self._persistent_by_label[label]
+        history.append(string)
+        while len(history) > self.max_persistent_per_label:
+            evicted = history.popleft()
+            self._persistent_strings.discard(evicted)
+            self.redacted_strings.pop(evicted, None)
+            self._sorted_redactions = None
 
     @property
     def transient_limit_reached(self):
@@ -127,11 +182,34 @@ class LogRedactor:
             self._sorted_redactions = sorted(
                     self.redacted_strings.items(),
                     key=lambda item: -len(item[0]))
-        for string, label in self._sorted_redactions:
-            label, count = label
-            msg = msg.replace(string, '<REDACTED {}{}>'.format(
-                label, '-{}'.format(count) if
-                self.label_counts[label] > 1 else ''))
+        if not self._sorted_redactions:
+            return msg
+        if (len(self._sorted_redactions) > _SENTINEL_LIMIT
+                or _SENTINEL_RE.search(msg) is not None):
+            return self._redact_in_place(msg)
+
+        # Phase 1 swaps each present string for a unique sentinel character,
+        # longest first, so shorter strings cannot match inside longer ones.
+        # Phase 2 swaps sentinels for placeholders, which are never rescanned.
+        placeholders = []
+        for string, (label, count) in self._sorted_redactions:
+            if string not in msg:
+                continue
+            msg = msg.replace(string, chr(_SENTINEL_BASE + len(placeholders)))
+            placeholders.append(self._placeholder(label, count))
+        for index, placeholder in enumerate(placeholders):
+            msg = msg.replace(chr(_SENTINEL_BASE + index), placeholder)
+        return msg
+
+    def _placeholder(self, label, count):
+        return '<REDACTED {}{}>'.format(
+            label, '-{}'.format(count) if self.label_counts[label] > 1 else '')
+
+    def _redact_in_place(self, msg):
+        # Fallback for messages that already contain private-use characters.
+        for string, (label, count) in self._sorted_redactions:
+            if string in msg:
+                msg = msg.replace(string, self._placeholder(label, count))
         return msg
 
 
@@ -210,17 +288,26 @@ def register_redactions(obj, key_path=None,
             if not success:
                 return False
     else:
-        if key_path:
+        # Booleans and one-character values are not secrets, and registering
+        # them would rewrite every "True" or digit in later log lines.
+        if key_path and not isinstance(obj, bool) and len(str(obj)) > 1:
             # A sensitive ancestor protects all of its descendants, including
             # objects inside arrays. A whitelisted child cannot override it.
             field_names = (str(key).lower() for key in key_path
                            if not str(key).isdecimal())
-            if any(name not in whitelisted and
-                   any(bad in name for bad in bad_patterns)
+            if any(_is_sensitive_name(name, bad_patterns, whitelisted)
                    for name in field_names):
                 return redactor.register(
                         obj, '-'.join(map(str, key_path)), persistent=persistent)
     return True
+
+
+def _is_sensitive_name(name, bad_patterns, whitelisted):
+    if name in whitelisted:
+        return False
+    for word in _NON_IDENTIFIER_WORDS:
+        name = name.replace(word, '')
+    return any(bad in name for bad in bad_patterns)
 
 
 def enable_bug_report_logging():

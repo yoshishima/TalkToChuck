@@ -3,7 +3,8 @@ import schwab
 import urllib.parse
 import json
 import copy
-from .utils import account_preferences, has_diff, MockResponse, no_duplicates
+from .utils import (account_preferences, has_diff, MockResponse,
+                    no_duplicates, PREFERENCES_PATH)
 from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
 from unittest import IsolatedAsyncioTestCase
 from schwab import streaming
@@ -40,7 +41,7 @@ class StreamClientTest(IsolatedAsyncioTestCase):
 
         self.maxDiff = None
 
-        with open('tests/testdata/preferences.json', 'r') as f:
+        with open(PREFERENCES_PATH, 'r') as f:
             preferences = json.load(f)
             self.pref_customer_id = \
                     preferences['streamerInfo'][0]['schwabClientCustomerId']

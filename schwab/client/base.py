@@ -151,19 +151,21 @@ class BaseClient(EnumEnforcer, ABC):
         return self.request_number
 
     def _assert_type(self, name, value, exp_types):
+        if any(isinstance(value, t) for t in exp_types):
+            return
+        # Only build the descriptive message on failure.
         value_type = type(value)
         value_type_name = '{}.{}'.format(
             value_type.__module__, value_type.__name__)
         exp_type_names = ['{}.{}'.format(
             t.__module__, t.__name__) for t in exp_types]
-        if not any(isinstance(value, t) for t in exp_types):
-            if len(exp_types) == 1:
-                error_str = "expected type '{}' for {}, got '{}'".format(
-                    exp_type_names[0], name, value_type_name)
-            else:
-                error_str = "expected type in ({}) for {}, got '{}'".format(
-                    ', '.join(exp_type_names), name, value_type_name)
-            raise ValueError(error_str)
+        if len(exp_types) == 1:
+            error_str = "expected type '{}' for {}, got '{}'".format(
+                exp_type_names[0], name, value_type_name)
+        else:
+            error_str = "expected type in ({}) for {}, got '{}'".format(
+                ', '.join(exp_type_names), name, value_type_name)
+        raise ValueError(error_str)
 
     def _validate_bool(self, name, value):
         if value is not None and type(value) is not bool:
@@ -171,8 +173,12 @@ class BaseClient(EnumEnforcer, ABC):
                 "value of '{}' must be either True or False".format(name))
         return value
 
-    def _format_date_as_iso(self, var_name, dt, *, end_bound=False):
-        '''Format in UTC; date-only end bounds advance to the next midnight.'''
+    def _format_date_as_iso(self, var_name, dt, *, end_bound=False,
+                            stacklevel=3):
+        '''Format in UTC; date-only end bounds advance to the next midnight.
+
+        Naive datetimes are interpreted as UTC and emit a ``UserWarning``,
+        matching the price-history methods.'''
         self._assert_type(var_name, dt, [self._DATE, self._DATETIME])
 
         if not isinstance(dt, self._DATETIME):
@@ -182,6 +188,10 @@ class BaseClient(EnumEnforcer, ABC):
                     year=dt.year, month=dt.month, day=dt.day,
                     tzinfo=datetime.timezone.utc)
         elif dt.tzinfo is None:
+            warnings.warn(
+                'Naive {} is interpreted as UTC, not local time; pass a '
+                'timezone-aware datetime.'.format(var_name),
+                UserWarning, stacklevel=stacklevel)
             dt = dt.replace(tzinfo=datetime.timezone.utc)
         else:
             dt = dt.astimezone(datetime.timezone.utc)
@@ -343,11 +353,13 @@ class BaseClient(EnumEnforcer, ABC):
         if to_entered_datetime is None:
             to_entered_datetime = now
 
+        # stacklevel 4 points warnings at the caller of the public method.
         params = {
             'fromEnteredTime': self._format_date_as_iso(
-                'from_entered_datetime', from_entered_datetime),
+                'from_entered_datetime', from_entered_datetime, stacklevel=4),
             'toEnteredTime': self._format_date_as_iso(
-                'to_entered_datetime', to_entered_datetime, end_bound=True),
+                'to_entered_datetime', to_entered_datetime, end_bound=True,
+                stacklevel=4),
         }
 
         if max_results is not None:
@@ -1191,8 +1203,10 @@ class BaseClient(EnumEnforcer, ABC):
         '''
         markets = self.convert_enum_iterable(markets, self.MarketHours.Market)
 
+        # Comma-separated like every other multi-valued parameter in this
+        # client and like upstream schwab-py.
         params = {
-                'markets': markets
+                'markets': ','.join(markets)
         }
         if date is not None:
             params['date'] = self._format_date_as_day('date', date)

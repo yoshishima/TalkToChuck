@@ -3,7 +3,9 @@ import datetime
 import httpx2 as httpx
 
 from schwab.auth import client_from_token_file
-from schwab.contrib.orders import construct_repeat_order, code_for_builder
+from schwab.contrib.orders import (
+    UnrepeatableOrderError, construct_repeat_order, code_for_builder)
+from schwab.scripts import APP_SECRET_ENV_VAR, resolve_app_secret
 
 
 def _latest_order(orders):
@@ -35,7 +37,12 @@ def latest_order_main(sys_args):
     required.add_argument(
             '--token_file', required=True, help='Path to token file')
     required.add_argument('--api_key', required=True)
-    required.add_argument('--app_secret', required=True)
+    parser.add_argument(
+            '--app_secret',
+            help='App secret. Prefer the {} environment variable or the '
+                 'interactive prompt: command-line arguments are visible in '
+                 'process listings and shell history.'.format(
+                     APP_SECRET_ENV_VAR))
 
     account_spec_group = parser.add_mutually_exclusive_group()
     account_spec_group.add_argument('--account_id', type=str,
@@ -46,7 +53,7 @@ def latest_order_main(sys_args):
 
     args = parser.parse_args(args=sys_args)
     client = client_from_token_file(
-            args.token_file, args.api_key, args.app_secret)
+            args.token_file, args.api_key, resolve_app_secret(args.app_secret))
 
     # If the account ID is specified, find the corresponding account hash
     if args.account_id is not None:
@@ -125,8 +132,14 @@ def latest_order_main(sys_args):
         if emit_destination_warning_newline:
             print()
 
+        try:
+            code = code_for_builder(construct_repeat_order(order))
+        except UnrepeatableOrderError as e:
+            print('Cannot generate code for order {}: {}'.format(
+                order['orderId'], e))
+            return -1
         print('# Order ID', order['orderId'])
-        print(code_for_builder(construct_repeat_order(order)))
+        print(code)
     else:
         print('No recent orders found')
 

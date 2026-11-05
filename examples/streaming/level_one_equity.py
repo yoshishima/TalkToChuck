@@ -29,8 +29,8 @@ class MyStreamConsumer:
 
         self.symbols = [
             'GOOG', 'GOOGL', 'BP', 'CVS', 'ADBE', 'CRM', 'SNAP', 'AMZN',
-            'BABA', 'DIS', 'TWTR', 'M', 'USO', 'AAPL', 'NFLX', 'GE', 'TSLA',
-            'F', 'SPY', 'FDX', 'UBER', 'ROKU', 'X', 'FB', 'BIDU', 'FIT'
+            'BABA', 'DIS', 'M', 'USO', 'AAPL', 'NFLX', 'GE', 'TSLA',
+            'F', 'SPY', 'FDX', 'UBER', 'ROKU', 'META', 'BIDU'
         ]
 
         # Create a queue so we can queue up work gathered from the client
@@ -56,17 +56,23 @@ class MyStreamConsumer:
     async def stream(self):
         await self.stream_client.login()  # Log into the streaming service
 
-        # TODO: QOS is currently not working as the command formatting has changed. Update & re-enable after docs are released
-        #await self.stream_client.quality_of_service(StreamClient.QOSLevel.EXPRESS)
-
         await self.stream_client.level_one_equity_subs(self.symbols)
 
-        # Kick off our handle_queue function as an independent coroutine
-        asyncio.ensure_future(self.handle_queue())
+        # Process queued messages in a separate task. Keep a reference to it:
+        # the event loop only holds weak references to tasks, so an
+        # unreferenced task can be garbage collected while it is running.
+        queue_task = asyncio.create_task(self.handle_queue())
 
         # Continuously handle inbound messages
-        while True:
-            await self.stream_client.handle_message()
+        try:
+            while True:
+                await self.stream_client.handle_message()
+                if queue_task.done():
+                    # Surface errors from the queue consumer instead of
+                    # silently buffering messages nobody processes.
+                    queue_task.result()
+        finally:
+            queue_task.cancel()
 
     async def handle_level_one_equity(self, msg):
         """

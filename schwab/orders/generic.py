@@ -30,43 +30,82 @@ def _copy_price_value(value):
     return value
 
 
-def _build_object(obj):
+def _build_object(obj, _path='order', _active=None):
     if isinstance(obj, Decimal):
         if not obj.is_finite():
-            raise ValueError('numeric values must be finite')
+            raise ValueError('numeric values must be finite (at {})'.format(_path))
         if obj == int(obj):
             return int(obj)
         value = float(obj)
         if not math.isfinite(value) or Decimal(str(value)) != obj:
             raise ValueError('Decimal cannot be represented as a JSON number without loss')
         return value
+    if isinstance(obj, float):
+        if not math.isfinite(obj):
+            raise ValueError('numeric values must be finite (at {})'.format(_path))
+        return obj
     # Literals are passed straight through
-    if isinstance(obj, str) or isinstance(obj, int) or isinstance(obj, float):
+    if isinstance(obj, (str, int)):
         return obj
 
     # Note enums are not handled because call callers convert their enums to
     # values.
+    if obj is None or isinstance(obj, (tuple, set, frozenset, bytes, bytearray)):
+        raise ValueError('unsupported value of type {} in order (at {})'.format(
+            type(obj).__name__, _path))
 
-    # Dicts and lists are iterated over, with keys intact
-    elif isinstance(obj, dict):
-        return dict((key, _build_object(value)) for key, value in obj.items())
-    elif isinstance(obj, list):
-        return [_build_object(i) for i in obj]
+    # A builder that contains itself would otherwise recurse until it fails.
+    if _active is None:
+        _active = set()
+    if id(obj) in _active:
+        raise ValueError('order contains itself (at {})'.format(_path))
+    _active.add(id(obj))
+    try:
+        # Dicts and lists are iterated over, with keys intact
+        if isinstance(obj, dict):
+            return {key: _build_object(value, '{}.{}'.format(_path, key), _active)
+                    for key, value in obj.items()}
+        if isinstance(obj, list):
+            return [_build_object(value, '{}[{}]'.format(_path, index), _active)
+                    for index, value in enumerate(obj)]
 
-    # Objects have their variables translated into keys
-    else:
+        # Objects have their variables translated into keys
+        try:
+            attributes = vars(obj)
+        except TypeError:
+            raise ValueError('unsupported value of type {} in order (at {})'.format(
+                type(obj).__name__, _path)) from None
         ret = {}
-        for name, value in vars(obj).items():
+        for name, value in attributes.items():
             if name == '_numeric_prices':
                 continue
             if value is None or name[0] != '_':
                 continue
 
             name = name[1:]
-            ret[name] = _build_object(value)
+            ret[name] = _build_object(value, '{}.{}'.format(_path, name), _active)
         if isinstance(obj, OrderBuilder):
             obj._format_option_prices(ret)
         return ret
+    finally:
+        _active.discard(id(obj))
+
+
+def _format_price_input(price):
+    '''Validate and format a numeric price given to set_price or
+    set_stop_price. Strings are handled by the setters themselves.'''
+    if isinstance(price, bool) or not isinstance(price, (int, float, Decimal)):
+        raise ValueError(
+            'price must be a str, int, float or Decimal, got {}'.format(
+                type(price).__name__))
+    if not _is_finite_number(price):
+        raise ValueError('price must be finite')
+    if price < 0:
+        # Credits are expressed with NET_CREDIT and a positive price.
+        raise ValueError('price must not be negative')
+    if isinstance(price, Decimal):
+        return _format_numeric_price(price)
+    return truncate_float(price)
 
 
 def truncate_float(flt):
@@ -304,9 +343,7 @@ class OrderBuilder(EnumEnforcer):
             self._stopPrice = stop_price
             self._numeric_prices.discard('stopPrice')
         else:
-            self._stopPrice = (_format_numeric_price(stop_price)
-                               if isinstance(stop_price, Decimal)
-                               else truncate_float(stop_price))
+            self._stopPrice = _format_price_input(stop_price)
             self._numeric_prices.add('stopPrice')
         return self
 
@@ -443,8 +480,7 @@ class OrderBuilder(EnumEnforcer):
             self._price = price
             self._numeric_prices.discard('price')
         else:
-            self._price = (_format_numeric_price(price)
-                           if isinstance(price, Decimal) else truncate_float(price))
+            self._price = _format_price_input(price)
             self._numeric_prices.add('price')
         return self
 

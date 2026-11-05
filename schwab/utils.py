@@ -90,8 +90,14 @@ class LazyLog:
     'Helper to defer evaluation of expensive variables in log messages'
     def __init__(self, func):
         self.func = func
+
     def __str__(self):
-        return self.func()
+        # Rendering happens inside logging filters, where an exception would
+        # propagate to the code that merely tried to log.
+        try:
+            return str(self.func())
+        except Exception as e:
+            return '<log rendering failed: {}>'.format(type(e).__name__)
 
 
 class Utils(EnumEnforcer):

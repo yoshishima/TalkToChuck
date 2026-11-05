@@ -2,6 +2,12 @@ from .base import BaseClient
 
 
 class Client(BaseClient):
+
+    def close_session(self):
+        '''Close the underlying HTTP session and its connection pool. The
+        synchronous counterpart of :meth:`AsyncClient.close_async_session`.'''
+        self.session.close()
+
     def _get_request(self, path, params):
         dest = 'https://api.schwabapi.com' + path
 

@@ -1,6 +1,9 @@
 test:
 	python -m pytest tests/
 
+lint:
+	python -m flake8 schwab bin examples tests
+
 fix:
 	autopep8 --in-place -r -a schwab
 	#autopep8 --in-place -r -a tests

@@ -16,7 +16,7 @@ setuptools.setup(
     description='Unofficial API wrapper for the Schwab HTTP API',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/alexgolec/schwab-py',
+    url='https://github.com/yoshishima/schwab-py',
     packages=setuptools.find_packages(exclude=('tests', 'tests.*')),
     classifiers=[
         'Programming Language :: Python :: 3',
@@ -31,15 +31,17 @@ setuptools.setup(
         'Topic :: Office/Business :: Financial :: Investment',
     ],
     python_requires='>=3.12',
+    # Keep the floors in docs/requirements.txt in sync; tests/packaging_test.py
+    # checks that they agree. httpx2 uses the operating system's trust store
+    # (via truststore), so certifi is not needed. websockets>=17.4 is required
+    # for safe recv() cancellation in the stream reader.
     install_requires=[
         'autopep8>=2.3.2',
         'authlib>=1.9.4',
-        'certifi>=2026.10.23',
         'flask>=3.1.3',
         'httpx2>=2.16.0',
         'multiprocess>=0.70.19',
         'psutil>=7.2.2',
-        'urllib3>=2.8.0',
         'websockets>=17.4'
     ],
     extras_require={
@@ -48,8 +50,10 @@ setuptools.setup(
             'colorama',
             'coverage',
             'build',
+            'flake8',
             'pytest',
             'pytz',
+            'requests',
             'setuptools',
             'sphinx_rtd_theme',
             'twine',
@@ -60,8 +64,8 @@ setuptools.setup(
     keywords='finance trading equities bonds options research',
     project_urls={
         'Documentation': 'https://schwab-py.readthedocs.io/en/latest/',
-        'Source': 'https://github.com/alexgolec/schwab-py',
-        'Tracker': 'https://github.com/alexgolec/schwab-py/issues',
+        'Source': 'https://github.com/yoshishima/schwab-py',
+        'Tracker': 'https://github.com/yoshishima/schwab-py/issues',
     },
     license='MIT',
     scripts=[
