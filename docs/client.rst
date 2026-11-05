@@ -189,6 +189,30 @@ specification can be set using this method:
 .. automethod:: schwab.client.Client.set_timeout
 
 
+++++++++++++++++++++++++
+Closing the HTTP Session
+++++++++++++++++++++++++
+
+Clients keep a pool of HTTP connections open. Close it when you are done with a
+client, for example before discarding it in a long-running process:
+
+.. automethod:: schwab.client.Client.close_session
+.. automethod:: schwab.client.AsyncClient.close_async_session
+
+
++++++++++++++
+Thread Safety
++++++++++++++
+
+A synchronous client may be shared by several threads. Token refreshes are
+serialized: when an expiring token is used by several threads at once, one
+thread refreshes it and the others wait and reuse the new token. Custom
+``token_write_func`` callbacks are therefore called once per refresh, but they
+run on whichever thread refreshed. Separate clients for the same token still do
+not coordinate; see :ref:`token_expiration` and the token-file notes in the
+authentication documentation.
+
+
 +++++++++
 Token Age
 +++++++++
@@ -391,6 +415,9 @@ Market Movers
 Market Hours
 ------------
 
+Several markets are sent as one comma-separated ``markets`` parameter, like
+the other multi-valued parameters in this client.
+
 .. automethod:: schwab.client.Client.get_market_hours
 .. automethod:: schwab.client.Client.get_market_hours_for_market
 .. autoclass:: schwab.client.Client.MarketHours
@@ -410,7 +437,9 @@ the following day. Passing the same date for both bounds therefore requests a
 full UTC day. The endpoint determines whether an event exactly at the upper
 boundary is included. Pass explicit timezone-aware ``datetime.datetime`` values
 when exact boundaries or a market-local day are needed. Datetime values are
-converted to UTC without advancing the end bound; naive datetimes mean UTC.
+converted to UTC without advancing the end bound. Naive datetimes mean UTC and,
+as for price history, emit a ``UserWarning``: a naive local time would shift
+the query window by the local UTC offset.
 
 ++++++++++++++++++++++++++++++
 Contextual price-history enums

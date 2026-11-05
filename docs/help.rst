@@ -102,7 +102,15 @@ fields, including login credentials and arrays of account identifiers, before
 reaching logging handlers.
 Registered secrets are redacted before JSON serialization, including escaped
 strings, and from exception tracebacks and stack information. Refreshed tokens
-are registered for redaction before persistence is attempted.
+are registered for redaction before persistence is attempted; the most recent
+32 values per token type are kept, since older tokens have expired.
+
+Enabling logging never changes program behaviour: values that cannot be
+rendered as JSON, such as ``Decimal`` parameters, are logged as text, and a log
+message that fails to render is replaced by a short marker. Booleans,
+one-character values and market-data numbers such as bid prices are not
+treated as secrets, so they stay readable in logs. Placeholders are inserted in
+a single pass and are never redacted again.
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

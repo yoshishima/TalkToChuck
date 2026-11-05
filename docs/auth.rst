@@ -99,22 +99,29 @@ and use it on another.
 
 .. code-block:: bash
 
-  usage: schwab-generate-token.py [-h] --token_file TOKEN_FILE --api_key API_KEY --app_secret APP_SECRET --callback_url CALLBACK_URL [--browser BROWSER]
+  usage: schwab-generate-token.py [-h] --token_file TOKEN_FILE --api_key API_KEY --callback_url CALLBACK_URL [--app_secret APP_SECRET] [--browser BROWSER]
 
   Fetch a new token and write it to a file
 
   options:
     -h, --help            show this help message and exit
+    --app_secret APP_SECRET
+                          App secret. Prefer the SCHWAB_APP_SECRET environment variable or the interactive
+                          prompt: command-line arguments are visible in process listings and shell history.
+    --browser BROWSER     Manually specify a browser in which to start the login flow. See here for available options:
+                          https://docs.python.org/3/library/webbrowser.html#webbrowser.register
 
   required arguments:
     --token_file TOKEN_FILE
                           Path to token file. Any existing file will be overwritten
     --api_key API_KEY
-    --app_secret APP_SECRET
     --callback_url CALLBACK_URL
-    --browser BROWSER     Manually specify a browser in which to start the login flow. See here for available options:
-                          https://docs.python.org/3/library/webbrowser.html#webbrowser.register
-    
+
+The app secret is read from ``--app_secret``, then from the
+``SCHWAB_APP_SECRET`` environment variable, and otherwise from a hidden prompt.
+If the browser flow fails, the script prints the reason before falling back to
+the manual flow.
+
 
 This script is installed by ``pip``, and will only be accessible if you've added
 pip's executable locations to your ``$PATH``. If you're having a hard time, feel
@@ -311,9 +318,14 @@ security warning.
 
 It is safe to ignore this warning and proceed anyway. *However*, you should 
 always verify that the address of the page displaying the warning matches your 
-callback URL.  :func:`client_from_login_flow 
-<schwab.auth.client_from_login_flow>` will print message reminding you of your 
+callback URL.  :func:`client_from_login_flow
+<schwab.auth.client_from_login_flow>` will print message reminding you of your
 callback URL each time you run it.
+
+The callback server only accepts a request that carries the OAuth ``state``
+from the authorization URL it opened. Other requests to the callback path,
+such as a stray request from another local program, receive an error page and
+do not end the login flow.
 
 
 ++++++++++++++++++++
@@ -367,9 +379,25 @@ experiencing token parsing issues, remember that:
 
 This restriction also applies to separate clients in the same application or
 process, as well as to multiple processes or machines. Use one owner for each
-token and route requests through that owner. The library does not coordinate
-refreshes across independent clients or custom token stores; atomic file writes
-and each async client's lock do not serialize the OAuth refresh itself.
+token and route requests through that owner. Within one client, refreshes are
+serialized: threads sharing a synchronous client, or tasks sharing an async
+client, trigger a single refresh. The library does not coordinate refreshes
+across independent clients or custom token stores.
+
+Token files are validated when loaded. A file that is not a JSON object, lacks
+a numeric ``creation_timestamp`` or lacks the OAuth token object raises
+``ValueError``; delete it and create a new token. The error does not echo the
+file's contents. ``schwab-py`` never deletes a token file on its own.
+
+The login flows check that the token file's directory is writable before
+opening the browser or prompting. The authorization code can be exchanged only
+once, so a token that cannot be saved afterwards would be lost.
+
+Token files are written atomically with owner-only permissions (``0600``) on
+POSIX systems, and the directory is synced so the update survives a power loss.
+On Windows, file permissions follow the containing folder's access control
+list; keep token files in a folder only your user can read, such as your user
+profile.
 
 If you didn't do any of this and are still seeing issues using a token file that 
 you're confident is valid, please `file a ticket 

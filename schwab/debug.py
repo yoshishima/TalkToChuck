@@ -63,7 +63,17 @@ def get_redacted_logger(name):
 
 
 def redact_json(payload):
-    '''Sanitize structured payloads without retaining their values globally.'''
+    '''Sanitize structured payloads without retaining their values globally.
+
+    Never raises: payloads that cannot be rendered, such as cyclic ones, are
+    replaced by a short marker so that logging cannot change behaviour.'''
+    try:
+        return _redact_json(payload)
+    except (TypeError, ValueError, RecursionError) as e:
+        return '<unloggable payload: {}>'.format(type(e).__name__)
+
+
+def _redact_json(payload):
     redactor = LogRedactor()
     register_redactions(payload, redactor=redactor)
     # Redact values before serialization as well as afterwards, so escaped
@@ -79,11 +89,7 @@ def redact_json(payload):
         if isinstance(value, str):
             return schwab.LOG_REDACTOR.redact(redactor.redact(value))
         return value
-    try:
-        text = json.dumps(sanitize(payload), indent=4, default=_log_default)
-    except (TypeError, ValueError, RecursionError) as e:
-        # Never let a debug log turn into an exception for the caller.
-        return '<unloggable payload: {}>'.format(type(e).__name__)
+    text = json.dumps(sanitize(payload), indent=4, default=_log_default)
     return schwab.LOG_REDACTOR.redact(text)
 
 

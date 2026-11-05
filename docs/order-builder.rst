@@ -204,12 +204,21 @@ process looks like this:
 
   # Notice we don't prefix this with "python" because this is a script that was 
   # installed by pip when you installed tda-api
-  schwab-order-codegen.py --token_file <your token file path> --api_key <your API key> --app_secret <your app secret>
+  schwab-order-codegen.py --token_file <your token file path> --api_key <your API key>
 
 When multiple orders are returned, the script selects the latest timezone-aware
 ``enteredTime`` and uses the order ID to break ties. It reports an error rather
 than guessing if a timestamp needed for the comparison is missing or invalid.
-Treat command-line credentials and shell history as sensitive.
+The app secret is read from ``--app_secret``, the ``SCHWAB_APP_SECRET``
+environment variable or a hidden prompt; prefer the latter two, because
+command-line arguments are visible in process listings and shell history.
+
+The script refuses, with an explanation, orders it cannot reproduce exactly:
+for example legs whose ``quantityType`` is not ``SHARES`` (a dollar amount or
+"all shares" would otherwise become a share count), legs with other fields the
+builder does not model, and unsupported instructions or leg types.
+:func:`~schwab.contrib.orders.construct_repeat_order` raises
+``UnrepeatableOrderError`` in the same cases.
 
 3. Copy-paste the resulting code and adapt it to your needs.
 
@@ -322,6 +331,16 @@ are snapped to that increment before truncation to account for arithmetic noise.
 For example, ``(10.1 + 10.2) / 2`` becomes ``10.15``, while ``19.9999999``
 still becomes ``19.99``. Nonzero numeric prices that would truncate to zero
 raise ``ValueError``. Explicit zero prices remain supported.
+
+Numeric prices must be ``int``, ``float`` or ``Decimal``; other types, such as
+``bool`` or ``None``, raise ``ValueError``. Negative numeric prices also raise
+``ValueError``: credits are expressed with ``OrderType.NET_CREDIT`` and a
+positive price. String prices and ``copy_price``/``copy_stop_price`` are passed
+through unchanged, as before.
+
+Child orders given as dictionaries must contain JSON-compatible values.
+``None``, tuples and non-finite numbers raise ``ValueError`` naming the
+offending field, and an order that contains itself is rejected.
 
 This behavior is meant as a sane heuristic, and there are almost certainly 
 situations where it is not the correct thing to do. You can sidestep this entire 

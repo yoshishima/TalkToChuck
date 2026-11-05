@@ -165,7 +165,11 @@ If a message is received for which no handler is registered, that message is
 ignored.
 
 Each handler receives its own copy of the message, including nested content.
-Changes made by one handler do not affect other handlers.
+Changes made by one handler do not affect other handlers. Messages decoded by
+the default decoder are copied with a fast copier for plain JSON data. Values
+of other types produced by a custom decoder, such as ``Decimal`` or
+``OrderedDict``, are copied with :func:`copy.deepcopy`. Objects that a custom
+decoder shares between several places in one message become separate copies.
 
 Asynchronous handlers run in background tasks. By default, a ``StreamClient``
 allows at most 100 pending handler tasks across all services. Set the positive
@@ -274,8 +278,9 @@ can find them by investigating the various enum classes ending in ``***Fields``.
 Some streams, such as the ones described in :ref:`level_one`, allow you to
 specify a subset of fields to be returned. Subscription handlers for these
 services take a list of the appropriate field enums the extra ``fields``
-parameter. If nothing is passed to this parameter, all supported fields are 
-requested.
+parameter. If nothing is passed to this parameter, all supported fields are
+requested. An empty list raises ``ValueError``; pass ``None`` to request all
+fields. Duplicate fields are requested once.
 
 
 ---------------
@@ -608,7 +613,14 @@ sensitive data; the exception message does not include the frame. Malformed
 messages do not fail pending subscription acknowledgements; the reader continues
 processing the connection. A request with no valid acknowledgement still times
 out according to ``response_timeout``. Data and notification entries without a
-valid service are logged and skipped individually.
+valid service are logged and skipped individually. Any exception raised by a
+custom :class:`~schwab.streaming.StreamJsonDecoder` is reported the same way,
+as ``UnparsableMessage`` with the original exception as its cause. Book
+entries with missing or partial price levels are delivered with the parts that
+are present relabeled.
+
+``response_timeout`` must be ``None`` (wait indefinitely) or a positive, finite
+number of seconds.
 
 ``StreamClient(max_pending_messages=1000)`` limits queued incoming messages,
 including parse-error markers, while acknowledgements are outstanding. The
