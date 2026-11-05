@@ -30,7 +30,7 @@ Notable functionality includes:
 
 ## Improvements in this fork
 
-The current fork is version v1.7.3. Changes since the original project include:
+The current fork is version v1.7.4. Changes since the original project include:
 
 - More reliable OAuth login and callback server startup, with clearer errors
   when the callback server times out or another process owns its port.
