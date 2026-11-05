@@ -33,14 +33,14 @@ setuptools.setup(
     python_requires='>=3.12',
     install_requires=[
         'autopep8>=2.3.2',
-        'authlib>=1.8.0',
-        'certifi>=2026.7.22',
+        'authlib>=1.9.4',
+        'certifi>=2026.10.23',
         'flask>=3.1.3',
-        'httpx2>=2.12.0',
+        'httpx2>=2.16.0',
         'multiprocess>=0.70.19',
         'psutil>=7.2.2',
-        'urllib3>=2.7.0',
-        'websockets>=17.1'
+        'urllib3>=2.8.0',
+        'websockets>=17.4'
     ],
     extras_require={
         'dev': [
