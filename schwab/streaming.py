@@ -487,9 +487,8 @@ class StreamClient(EnumEnforcer):
                 and task is not None and not task.done()
                 and task is not asyncio.current_task()):
             # Cancelling a reader blocked in recv() must not lose or reorder
-            # frames. websockets 17.4 fixed a race where frames arriving in the
-            # same loop iteration as the cancellation could be misordered,
-            # which is why setup.py requires websockets>=17.4.
+            # frames. websockets 17.3 fixed a fragmented-message cancellation
+            # race; setup.py also requires the security fix in 17.4.
             task.cancel()
             try:
                 await task

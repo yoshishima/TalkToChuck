@@ -1084,6 +1084,15 @@ class PackagingConsistencyTest(unittest.TestCase):
                 with self.subTest(package=name):
                     self.assertEqual(setup_floors[name], version)
 
+    def test_installed_runtime_dependencies_satisfy_checkout(self):
+        from importlib.metadata import version
+        from packaging.requirements import Requirement
+
+        for text in self.install_requires():
+            requirement = Requirement(text)
+            with self.subTest(package=requirement.name):
+                self.assertIn(version(requirement.name), requirement.specifier)
+
     def test_readme_names_the_current_version(self):
         with open(os.path.join(REPO_ROOT, 'README.md'), encoding='utf-8') as f:
             self.assertIn('v' + schwab.__version__, f.read())
