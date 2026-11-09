@@ -174,6 +174,11 @@ decoder shares between several places in one message become separate copies.
 Asynchronous handlers run in background tasks. By default, a ``StreamClient``
 allows at most 100 pending handler tasks across all services. Set the positive
 integer ``max_pending_handler_tasks`` constructor argument to adjust this limit.
+Exceptions from synchronous and asynchronous handlers are logged at ERROR and
+do not propagate from ``handle_message()``. Pass a synchronous
+``on_handler_error(exception)`` callback to ``StreamClient`` to notify your
+application. The callback runs on the event-loop thread; its own exceptions are
+logged. It should return promptly and schedule any asynchronous work itself.
 When all slots are occupied, ``handle_message()`` waits for a handler to finish
 before invoking the next handler. Keep one message-consumption loop so this
 backpressure also limits how quickly your application reads from the socket.

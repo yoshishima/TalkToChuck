@@ -209,8 +209,16 @@ class StreamClient(EnumEnforcer):
     def __init__(self, client, *, account_id=None,
                  enforce_enums=True, ssl_context=None, response_timeout=30.0,
                  max_pending_handler_tasks=100, max_pending_messages=1000,
-                 offload_sync_preferences=False):
+                 offload_sync_preferences=False, on_handler_error=None):
         super().__init__(enforce_enums)
+
+        if on_handler_error is not None and (
+                not callable(on_handler_error)
+                or inspect.iscoroutinefunction(on_handler_error)
+                or inspect.iscoroutinefunction(
+                    getattr(on_handler_error, '__call__', None))):
+            raise ValueError('on_handler_error must be a synchronous callable or None')
+        self._on_handler_error = on_handler_error
 
         if type(offload_sync_preferences) is not bool:
             raise ValueError('offload_sync_preferences must be a bool')
@@ -681,6 +689,16 @@ class StreamClient(EnumEnforcer):
                 message,
                 exc_info=(type(exception), exception,
                           exception.__traceback__))
+        if self._on_handler_error is not None:
+            try:
+                result = self._on_handler_error(exception)
+                if inspect.isawaitable(result):
+                    close = getattr(result, 'close', None)
+                    if close is not None:
+                        close()
+                    raise TypeError('on_handler_error must be synchronous')
+            except Exception:
+                self.logger.exception('Stream handler error callback failed')
 
     async def _dispatch_handlers(self, service, message, *, dispatch_state,
                                  label_message=False):
