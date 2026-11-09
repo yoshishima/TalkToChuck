@@ -179,7 +179,8 @@ def code_for_builder(builder, var_name=None):
     ast.render(imports, lines)
 
     import_lines = []
-    for module, names in imports.items():
+    for module, names in sorted(imports.items()):
+        names = sorted(names)
         line = 'from {} import {}'.format(
                 module, ', '.join(names))
         if len(line) > 80:
