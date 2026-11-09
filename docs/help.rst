@@ -100,6 +100,9 @@ balances and positions. Request URLs mask account, order, and transaction
 identifiers. HTTP request and stream payloads redact recognized sensitive
 fields, including login credentials and arrays of account identifiers, before
 reaching logging handlers.
+The httpx2 request logger omits Schwab URL paths and query strings. The default
+websocket logger omits frame contents, including login credentials. If you pass
+your own websocket logger, you are responsible for protecting its output.
 Registered secrets are redacted before JSON serialization, including escaped
 strings, and from exception tracebacks and stack information. Refreshed tokens
 are registered for redaction before persistence is attempted; the most recent

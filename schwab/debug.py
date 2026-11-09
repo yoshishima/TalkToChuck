@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import sys
+from urllib.parse import urlsplit
 import schwab
 
 
@@ -54,6 +55,46 @@ class _RedactingFilter(logging.Filter):
 
 
 _REDACTING_FILTER = _RedactingFilter()
+
+
+class _SchwabHttpFilter(logging.Filter):
+    '''Hide Schwab URLs in httpx's shared request logger.'''
+    def filter(self, record):
+        if (record.msg == 'HTTP Request: %s %s "%s %d %s"'
+                and isinstance(record.args, tuple) and len(record.args) == 5):
+            args = list(record.args)
+            try:
+                parsed = urlsplit(str(args[1]))
+                if parsed.hostname and parsed.hostname.lower() == 'api.schwabapi.com':
+                    args[1] = 'https://api.schwabapi.com/<redacted>'
+                    record.args = tuple(args)
+            except (ValueError, TypeError):
+                # A malformed URL must not escape via diagnostic logging.
+                args[1] = '<url omitted>'
+                record.args = tuple(args)
+        return True
+
+
+class _WebsocketFrameFilter(logging.Filter):
+    def filter(self, record):
+        if record.msg in ('< %s', '> %s'):
+            record.msg = 'WebSocket frame omitted'
+            record.args = ()
+        return True
+
+
+_HTTP_FILTER = _SchwabHttpFilter()
+_WEBSOCKET_FILTER = _WebsocketFrameFilter()
+logging.getLogger('httpx2').addFilter(_HTTP_FILTER)
+
+
+def get_websocket_logger():
+    logger = get_redacted_logger('schwab.websocket')
+    logger.addFilter(_WEBSOCKET_FILTER)
+    # Frame omission must run before the general filter renders the record.
+    logger.removeFilter(_REDACTING_FILTER)
+    logger.addFilter(_REDACTING_FILTER)
+    return logger
 
 
 def get_redacted_logger(name):

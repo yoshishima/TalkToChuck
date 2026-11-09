@@ -13,7 +13,7 @@ import warnings
 from websockets.asyncio import client as ws_client
 
 from .utils import EnumEnforcer, LazyLog
-from .debug import get_redacted_logger, redact_json
+from .debug import get_redacted_logger, get_websocket_logger, redact_json
 
 
 class StreamJsonDecoder(ABC):
@@ -363,6 +363,8 @@ class StreamClient(EnumEnforcer):
 
     async def _init_from_preferences(self, prefs, websocket_connect_args):
         await self._close_connection()
+        websocket_connect_args = dict(websocket_connect_args)
+        websocket_connect_args.setdefault('logger', get_websocket_logger())
 
         # Record streamer subscription keys
         stream_info = prefs['streamerInfo'][0]
