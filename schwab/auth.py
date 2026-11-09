@@ -4,6 +4,7 @@ import collections
 import asyncio as asyncio_module
 import contextlib
 import httpx2 as httpx
+import inspect
 import json
 import math
 import multiprocess
@@ -188,8 +189,14 @@ class TokenMetadata:
             # even if persistence fails, while still surfacing the write error.
             self.token = token
             register_redactions(token)
-            return self.unwrapped_token_write_func(
+            result = self.unwrapped_token_write_func(
                 self.wrap_token_in_metadata(token), *args, **kwargs)
+            if inspect.isawaitable(result):
+                close = getattr(result, 'close', None)
+                if close is not None:
+                    close()
+                raise TypeError('a synchronous token writer is required')
+            return result
 
         return wrapped_token_write_func
 
@@ -206,7 +213,9 @@ class TokenMetadata:
                 if getattr(writer, '_schwab_file_writer', False) is True:
                     await asyncio_module.to_thread(writer, payload, *args, **kwargs)
                 else:
-                    writer(payload, *args, **kwargs)
+                    result = writer(payload, *args, **kwargs)
+                    if inspect.isawaitable(result):
+                        await result
 
         async def update_token(token, *args, **kwargs):
             # A canceled refresh must not leave an older file write racing a
@@ -485,7 +494,8 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     :param token_write_func: Function that writes the token on update. Will be
                              called whenever the token is updated, such as when
                              it is refreshed. See the above-mentioned example 
-                             for what parameters this method takes.
+                             for what parameters this method takes. With an
+                             async client, the writer may be an async function.
     :param callback_timeout: How long to wait for a callback from the server 
                              before giving up, in seconds. Wait forever if set
                              to zero or ``None``.
@@ -835,6 +845,10 @@ def client_from_received_url(
     # XXX: The AuthContext must be serializable, which means the original 
     #      OAuth2Client created in get_auth_context cannot be passed around. 
     #      Instead, we reconstruct it here.
+    if inspect.iscoroutinefunction(token_write_func) or inspect.iscoroutinefunction(
+            getattr(token_write_func, '__call__', None)):
+        raise TypeError('login requires a synchronous token writer; use '
+                        'client_from_access_functions for async writers')
     oauth = OAuth2Client(api_key, redirect_uri=auth_context.callback_url)
     try:
         token = oauth.fetch_token(
