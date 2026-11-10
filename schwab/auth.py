@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from typing import Any, Callable
 
 from schwab.client import AsyncClient, Client
 from schwab.debug import register_redactions, get_redacted_logger
@@ -654,8 +655,9 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
 # client_from_token_path
 
 
-def client_from_token_file(token_path, api_key, app_secret, asyncio=False,
-                           enforce_enums=True):
+def client_from_token_file(token_path: str | os.PathLike[str], api_key: str,
+                           app_secret: str, asyncio: bool = False,
+                           enforce_enums: bool = True) -> Client | AsyncClient:
     '''
     Returns a session from an existing token file. The session will perform
     an auth refresh as needed. It will also update the token on disk whenever
@@ -773,10 +775,12 @@ def client_from_manual_flow(api_key, app_secret, callback_url, token_path,
 # client_from_access_functions
 
 
-def client_from_access_functions(api_key, app_secret, token_read_func,
-                                 token_write_func, asyncio=False,
-                                 enforce_enums=True, *,
-                                 offload_sync_token_writer=False):
+def client_from_access_functions(
+        api_key: str, app_secret: str,
+        token_read_func: Callable[[], dict[str, Any]],
+        token_write_func: Callable[..., Any], asyncio: bool = False,
+        enforce_enums: bool = True, *,
+        offload_sync_token_writer: bool = False) -> Client | AsyncClient:
     '''
     Returns a session from an existing token file, using the accessor methods to
     read and write the token. This is an advanced method for users who do not

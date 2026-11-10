@@ -1,6 +1,7 @@
 import math
 import warnings
 from contextlib import contextmanager
+from typing import Any, Self
 
 from decimal import (Decimal, Inexact, InvalidOperation, MAX_EMAX, MIN_EMIN,
                      ROUND_DOWN, ROUND_HALF_EVEN, Rounded, localcontext)
@@ -484,7 +485,7 @@ class OrderBuilder(EnumEnforcer):
             self._numeric_prices.add('price')
         return self
 
-    def copy_price(self, price):
+    def copy_price(self, price: Any) -> Self:
         '''
         Directly set the price, avoiding all the validation and truncation
         logic from :func:`set_price`.
@@ -664,5 +665,5 @@ class OrderBuilder(EnumEnforcer):
                 raise ValueError('nonzero option price must not truncate to zero')
             order[field] = format(truncated, '.2f')
 
-    def build(self):
+    def build(self) -> dict[str, Any]:
         return _build_object(self)

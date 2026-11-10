@@ -158,7 +158,8 @@ class BaseClient(EnumEnforcer, ABC):
             self.request_number += 1
             return self.request_number
 
-    def configure_get_retries(self, max_retries=0, *, backoff=0.5, max_delay=30.0):
+    def configure_get_retries(self, max_retries: int = 0, *, backoff: float = 0.5,
+                              max_delay: float = 30.0) -> None:
         '''Opt into retries for GET responses with status 429, 500, 502, 503 or 504.
 
         Retry-After is respected; a delay greater than max_delay stops retries.

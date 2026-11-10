@@ -18,6 +18,7 @@ setuptools.setup(
     long_description_content_type='text/markdown',
     url='https://github.com/yoshishima/schwab-py',
     packages=setuptools.find_packages(exclude=('tests', 'tests.*')),
+    package_data={'schwab': ['py.typed']},
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3 :: Only',
