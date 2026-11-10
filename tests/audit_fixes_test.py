@@ -101,7 +101,7 @@ class LoggingNeverRaisesTest(unittest.IsolatedAsyncioTestCase):
             'schwab.test', logging.ERROR, __file__, 1, 'value %d', ('x',),
             None)
         self.assertTrue(debug._REDACTING_FILTER.filter(record))
-        self.assertEqual('<unformattable log record: TypeError>', record.msg)
+        self.assertEqual('<unformattable log record: TypeError>', record.getMessage())
 
     def test_redact_json_renders_unserializable_values(self):
         with patch.object(schwab, 'LOG_REDACTOR', debug.LogRedactor()):
