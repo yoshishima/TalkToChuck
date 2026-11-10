@@ -81,6 +81,16 @@ def construct_repeat_order(historical_order):
     TRIGGER requires one child and OCO requires two. Other strategies cannot
     have children. Unsupported shapes raise UnrepeatableOrderError.
     '''
+    try:
+        return _construct_repeat_order(historical_order)
+    except UnrepeatableOrderError:
+        raise
+    except ValueError as exc:
+        raise UnrepeatableOrderError(
+            'cannot repeat order: {}'.format(exc)) from exc
+
+
+def _construct_repeat_order(historical_order):
     if 'orderStrategyType' not in historical_order:
         raise ValueError('historical order is missing orderStrategyType')
     children = _validate_children(
