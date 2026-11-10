@@ -31,10 +31,10 @@ setuptools.setup(
         'Topic :: Office/Business :: Financial :: Investment',
     ],
     python_requires='>=3.12',
-    # Keep the floors in docs/requirements.txt in sync; tests/packaging_test.py
+    # Keep the floors in docs/requirements.txt in sync; tests/audit_fixes_test.py
     # checks that they agree. httpx2 uses the operating system's trust store
-    # (via truststore), so certifi is not needed. websockets>=17.4 is required
-    # for safe recv() cancellation in the stream reader.
+    # (via truststore), so certifi is not needed. websockets 17.3 fixes recv()
+    # cancellation; 17.4 also fixes fragmented-message memory exhaustion.
     install_requires=[
         'autopep8>=2.3.2',
         'authlib>=1.9.4',
