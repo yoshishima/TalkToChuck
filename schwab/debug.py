@@ -34,15 +34,32 @@ def get_logger():
     return get_redacted_logger(__name__)
 
 
-class _RedactingFilter(logging.Filter):
-    def filter(self, record):
+class _LazyRedactedMessage:
+    def __init__(self, msg, args):
+        self.msg = msg
+        self.args = args
+        self.rendered = None
+
+    def __str__(self):
+        if self.rendered is not None:
+            return self.rendered
         try:
-            message = record.getMessage()
+            message = str(self.msg)
+            if self.args:
+                message = message % self.args
         except Exception as e:
             # Logging must never change program behaviour. Drop the
             # unformattable arguments rather than emitting them unredacted.
             message = '<unformattable log record: {}>'.format(type(e).__name__)
-        record.msg = schwab.LOG_REDACTOR.redact(message)
+        self.rendered = schwab.LOG_REDACTOR.redact(message)
+        self.msg = None
+        self.args = None
+        return self.rendered
+
+
+class _RedactingFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = _LazyRedactedMessage(record.msg, record.args)
         record.args = ()
         if record.exc_info and not record.exc_text:
             record.exc_text = logging.Formatter().formatException(
