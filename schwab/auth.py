@@ -498,8 +498,9 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     :param token_write_func: Function that writes the token on update. Will be
                              called whenever the token is updated, such as when
                              it is refreshed. See the above-mentioned example 
-                             for what parameters this method takes. With an
-                             async client, the writer may be an async function.
+                             for what parameters this method takes. Login
+                             requires a synchronous writer even when the
+                             resulting client is asynchronous.
     :param callback_timeout: How long to wait for a callback from the server 
                              before giving up, in seconds. Wait forever if set
                              to zero or ``None``.
