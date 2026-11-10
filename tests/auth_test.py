@@ -228,7 +228,7 @@ class ClientFromLoginFlowTest(unittest.TestCase):
                 'https://auth.url.com', None)
 
         with self.assertRaisesRegex(auth.RedirectServerExitedError,
-                                    'callback URL without a port number'):
+                                    'callback URL has an explicit port'):
             auth.client_from_login_flow(
                     API_KEY, APP_SECRET, callback_url, self.token_path)
 
@@ -468,6 +468,30 @@ class CallbackServerReadinessTest(unittest.TestCase):
                 'Timed out waiting for the local OAuth callback server'):
             auth._wait_for_callback_server(
                     self.server, self.callback_port, self.readiness_token)
+
+    def test_startup_exit_reports_port_and_possible_conflict(self):
+        self.server.exitcode = 1
+        with self.assertRaisesRegex(auth.RedirectServerExitedError,
+                                    'port 6969.*port may already be in use'):
+            auth._wait_for_callback_server(self.server, 6969, self.readiness_token)
+
+    def test_exit_after_startup_interrupts_callback_wait(self):
+        import queue
+        with patch('schwab.auth.multiprocess') as process, \
+                patch('schwab.auth.sys.platform', 'win32'), \
+                patch('schwab.auth._check_token_path_writable'), \
+                patch('schwab.auth._wait_for_callback_server'), \
+                patch('schwab.auth.get_auth_context') as context, \
+                patch('schwab.auth.webbrowser.get'), \
+                patch('schwab.auth.psutil.Process'):
+            context.return_value.authorization_url = 'https://example.invalid'
+            process.Process.return_value.exitcode = 7
+            process.Queue.return_value.get.side_effect = queue.Empty
+            with self.assertRaisesRegex(auth.RedirectServerExitedError,
+                                        'waiting for the callback.*exit code 7'):
+                auth.client_from_login_flow(
+                    API_KEY, APP_SECRET, 'https://127.0.0.1:6969/callback',
+                    'unused', interactive=False)
 
 
 class ClientFromTokenFileTest(unittest.TestCase):

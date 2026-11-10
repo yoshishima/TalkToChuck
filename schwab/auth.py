@@ -412,9 +412,12 @@ def _wait_for_callback_server(server, callback_port, readiness_token):
 
     while True:
         if server.exitcode is not None:
+            hint = (' Check whether the callback URL has an explicit port.'
+                    if callback_port == 443 else
+                    ' The port may already be in use; choose an unused port.')
             raise RedirectServerExitedError(
-                    'Redirect server exited. Are you attempting to use a '
-                    'callback URL without a port number specified?')
+                    'Redirect server exited during startup on port {} '
+                    '(exit code {}).{}'.format(callback_port, server.exitcode, hint))
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -644,7 +647,11 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
                         timeout=queue_timeout)
                 break
             except queue.Empty:
-                pass
+                if server.exitcode is not None:
+                    raise RedirectServerExitedError(
+                        'Redirect server exited while waiting for the callback '
+                        'on port {} (exit code {}).'.format(
+                            callback_port, server.exitcode))
 
         if not received_url:
             raise RedirectTimeoutError(
