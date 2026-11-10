@@ -3,11 +3,13 @@ from collections import defaultdict, deque
 import datetime
 from decimal import Decimal
 import enum
+import functools
 import inspect
 import json
 import logging
 import re
 import sys
+import threading
 from urllib.parse import urlsplit
 import schwab
 
@@ -211,6 +213,14 @@ def _log_default(value):
     return '<{}>'.format(type(value).__name__)
 
 
+def _synchronized(method):
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 class LogRedactor:
     '''
     Collects strings that should not be emitted and replaces them with safe
@@ -219,6 +229,7 @@ class LogRedactor:
 
     def __init__(self, *, max_transient_entries=_DEFAULT_MAX_TRANSIENT_REDACTIONS,
                  max_persistent_per_label=_DEFAULT_MAX_PERSISTENT_PER_LABEL):
+        self._lock = threading.RLock()
         self.redacted_strings = {}
         self.label_counts = defaultdict(int)
         self.max_transient_entries = max_transient_entries
@@ -233,6 +244,7 @@ class LogRedactor:
         self._matcher_safe = False
         self._transient_limit_reached = False
 
+    @_synchronized
     def register(self, string, label, *, persistent=True):
         '''
         Registers a string that should not be emitted and the label with with
@@ -273,9 +285,11 @@ class LogRedactor:
             self._sorted_redactions = None
 
     @property
+    @_synchronized
     def transient_limit_reached(self):
         return self._transient_limit_reached
 
+    @_synchronized
     def clear_transient(self):
         self.redacted_strings = {
             string: label
@@ -288,6 +302,7 @@ class LogRedactor:
         self._sorted_redactions = None
         self._transient_limit_reached = False
 
+    @_synchronized
     def redact(self, msg):
         '''
         Scans the string for secret strings and returns a sanitized version with
