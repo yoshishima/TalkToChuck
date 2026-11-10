@@ -474,6 +474,10 @@ enum are still rejected. Iterable enum parameters treat a bare string as one
 value rather than a sequence of characters. Order queries forward any explicitly
 provided ``max_results``, including zero; omitting it leaves the API default in
 place. Forwarding a value does not guarantee that the API accepts it.
+
+GET retries
++++++++++++
+
 GET retries are disabled by default. To retry rate limits and selected server
 errors, call ``client.configure_get_retries(max_retries=3)``. Backoff is bounded
 by ``max_delay``; when a server's Retry-After exceeds that limit, the response is
