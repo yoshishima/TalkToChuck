@@ -81,8 +81,9 @@ exception.
 
 Login retrieves user preferences through the supplied HTTP client. An async HTTP
 client avoids blocking the event loop. For a synchronous client, login runs that
-lookup on the event-loop thread by default. Applications whose synchronous client,
-session and token callbacks are safe to call from a worker thread may instead use
+lookup on the event-loop thread by default and emits a warning. Applications
+whose synchronous client, session and token callbacks are safe to call from a
+worker thread may instead use
 ``StreamClient(client, offload_sync_preferences=True)``. Canceling login does not
 stop a synchronous request that is already running in that worker thread.
 

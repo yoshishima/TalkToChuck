@@ -14,6 +14,7 @@ from websockets.asyncio import client as ws_client
 
 from .utils import EnumEnforcer, LazyLog
 from .debug import get_redacted_logger, get_websocket_logger, redact_json
+from .client.synchronous import Client
 
 
 class StreamJsonDecoder(ABC):
@@ -876,6 +877,11 @@ class StreamClient(EnumEnforcer):
         '''
 
         # Fetch required data and initialize the client
+        if isinstance(self._client, Client) and not self._offload_sync_preferences:
+            warnings.warn(
+                'Synchronous preference lookup blocks the event loop; use an '
+                'async client or offload_sync_preferences=True when safe.',
+                RuntimeWarning, stacklevel=2)
         if self._offload_sync_preferences:
             r = await asyncio.to_thread(self._client.get_user_preferences)
         else:
