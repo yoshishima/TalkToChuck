@@ -393,37 +393,37 @@ def register_redactions(obj, key_path=None,
     if redactor is None:
         redactor = schwab.LOG_REDACTOR
 
-    if isinstance(obj, list):
-        for idx, value in enumerate(obj):
-            key_path.append(str(idx))
-            success = register_redactions(
-                    value, key_path, bad_patterns, whitelisted,
-                    persistent=persistent, redactor=redactor)
-            key_path.pop()
-            if not success:
-                return False
-    elif isinstance(obj, dict):
-        for key, value in obj.items():
-            key_path.append(key)
-            success = register_redactions(
-                    value, key_path, bad_patterns, whitelisted,
-                    persistent=persistent, redactor=redactor)
-            key_path.pop()
-            if not success:
-                return False
-    else:
-        # Booleans and one-character values are not secrets, and registering
-        # them would rewrite every "True" or digit in later log lines.
-        if key_path and not isinstance(obj, bool) and len(str(obj)) > 1:
-            # A sensitive ancestor protects all of its descendants, including
-            # objects inside arrays. A whitelisted child cannot override it.
-            field_names = (str(key).lower() for key in key_path
-                           if not str(key).isdecimal())
-            if any(_is_sensitive_name(name, bad_patterns, whitelisted)
-                   for name in field_names):
-                return redactor.register(
-                        obj, '-'.join(map(str, key_path)), persistent=persistent)
-    return True
+    sensitive_names = {}
+
+    def sensitive_key(key):
+        name = str(key).lower()
+        if name.isdecimal():
+            return False
+        if name not in sensitive_names:
+            sensitive_names[name] = _is_sensitive_name(
+                name, bad_patterns, whitelisted)
+        return sensitive_names[name]
+
+    def visit(value, sensitive):
+        if isinstance(value, (list, dict)):
+            items = enumerate(value) if isinstance(value, list) else value.items()
+            for key, child in items:
+                key_path.append(str(key) if isinstance(value, list) else key)
+                try:
+                    if not visit(child, sensitive or sensitive_key(key)):
+                        return False
+                finally:
+                    key_path.pop()
+            return True
+        # Ignore booleans and single-character values: they are too broad to
+        # register safely as secrets.
+        if (sensitive and key_path and not isinstance(value, bool)
+                and len(str(value)) > 1):
+            return redactor.register(
+                value, '-'.join(map(str, key_path)), persistent=persistent)
+        return True
+
+    return visit(obj, any(sensitive_key(key) for key in key_path))
 
 
 def _is_sensitive_name(name, bad_patterns, whitelisted):
