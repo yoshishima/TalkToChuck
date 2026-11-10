@@ -1,9 +1,19 @@
 import unittest
+import threading
 
 from schwab.auth import TokenMetadata, client_from_received_url
 
 
 class TokenWriterTest(unittest.IsolatedAsyncioTestCase):
+    async def test_opt_in_offloads_writer(self):
+        threads = []
+        metadata = TokenMetadata('old', 123, lambda token: threads.append(
+            threading.get_ident()))
+        metadata.offload_sync_token_writer = True
+        await metadata.async_wrapped_token_write_func()('new')
+        self.assertNotEqual(threads, [threading.get_ident()])
+        self.assertEqual(len(threads), 1)
+
     async def test_async_refresh_awaits_writer_and_propagates_errors(self):
         writes = []
 

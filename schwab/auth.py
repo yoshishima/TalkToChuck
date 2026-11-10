@@ -135,6 +135,7 @@ class TokenMetadata:
         # to the unwrapped token writer function to allow us to inject the
         # appropriate write function.
         self.unwrapped_token_write_func = unwrapped_token_write_func
+        self.offload_sync_token_writer = False
 
         # The current token. Updated whenever the wrapped token update function 
         # is called.
@@ -210,12 +211,14 @@ class TokenMetadata:
                 register_redactions(token)
                 writer = self.unwrapped_token_write_func
                 payload = self.wrap_token_in_metadata(token)
-                if getattr(writer, '_schwab_file_writer', False) is True:
-                    await asyncio_module.to_thread(writer, payload, *args, **kwargs)
+                if (getattr(writer, '_schwab_file_writer', False) is True
+                        or self.offload_sync_token_writer):
+                    result = await asyncio_module.to_thread(
+                        writer, payload, *args, **kwargs)
                 else:
                     result = writer(payload, *args, **kwargs)
-                    if inspect.isawaitable(result):
-                        await result
+                if inspect.isawaitable(result):
+                    await result
 
         async def update_token(token, *args, **kwargs):
             # A canceled refresh must not leave an older file write racing a
@@ -772,7 +775,8 @@ def client_from_manual_flow(api_key, app_secret, callback_url, token_path,
 
 def client_from_access_functions(api_key, app_secret, token_read_func,
                                  token_write_func, asyncio=False,
-                                 enforce_enums=True):
+                                 enforce_enums=True, *,
+                                 offload_sync_token_writer=False):
     '''
     Returns a session from an existing token file, using the accessor methods to
     read and write the token. This is an advanced method for users who do not
@@ -803,7 +807,8 @@ def client_from_access_functions(api_key, app_secret, token_read_func,
     :param token_write_func: Function that writes the token on update. Will be
                              called whenever the token is updated, such as when
                              it is refreshed. See the above-mentioned example 
-                             for what parameters this method takes.
+                             for what parameters this method takes. Async
+                             writers are supported when ``asyncio=True``.
     :param asyncio: If set to ``True``, this will enable async support allowing
                     the client to be used in an async environment. Defaults to
                     ``False``
@@ -811,11 +816,17 @@ def client_from_access_functions(api_key, app_secret, token_read_func,
                           the client methods. Only do it if you know you really
                           need it. For most users, it is advised to use enums
                           to avoid errors.
+    :param offload_sync_token_writer: Run the writer in a worker thread for an
+                          async client. Enable only for thread-safe writers.
+                          Defaults to ``False``.
     '''
+    if type(offload_sync_token_writer) is not bool:
+        raise ValueError('offload_sync_token_writer must be a bool')
     token = token_read_func()
 
     # Extract metadata and unpack the token, if necessary
     metadata = TokenMetadata.from_loaded_token(token, token_write_func)
+    metadata.offload_sync_token_writer = offload_sync_token_writer
     return _client_from_token_metadata(
         api_key, app_secret, metadata, asyncio, enforce_enums)
 
