@@ -54,7 +54,16 @@ def __make_update_token_func(token_path):
                 json.dump(t, f)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(temporary_path, resolved_token_path)
+            # Windows readers that do not share delete access can briefly
+            # prevent the atomic rename (for example, while antivirus scans).
+            for attempt in range(5):
+                try:
+                    os.replace(temporary_path, resolved_token_path)
+                    break
+                except PermissionError:
+                    if os.name != 'nt' or attempt == 4:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
             os.chmod(
                     resolved_token_path, stat.S_IRUSR | stat.S_IWUSR)
             _fsync_directory(token_dir)
