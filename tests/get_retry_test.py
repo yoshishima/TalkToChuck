@@ -8,6 +8,36 @@ from schwab.client.asynchronous import AsyncClient
 
 
 class GetRetryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_transport_failures_are_retried_in_both_clients(self):
+        sync_session = Mock()
+        sync_session.get.side_effect = [httpx2.ConnectError('offline'), httpx2.Response(200)]
+        sync = Client('key', sync_session)
+        sync.configure_get_retries(1)
+        with patch('schwab.client.base.random.uniform', return_value=0.25), \
+                patch('schwab.client.synchronous.time.sleep') as sleep:
+            self.assertEqual(200, sync._get_request('/test', {}).status_code)
+        sleep.assert_called_once_with(0.25)
+
+        async_session = Mock()
+        async_session.get = AsyncMock(side_effect=[
+            httpx2.ReadTimeout('slow'), httpx2.Response(200)])
+        async_client = AsyncClient('key', async_session)
+        async_client.configure_get_retries(1)
+        with patch('schwab.client.base.random.uniform', return_value=0.1), \
+                patch('schwab.client.asynchronous.asyncio.sleep', new_callable=AsyncMock) as sleep:
+            self.assertEqual(200, (await async_client._get_request('/test', {})).status_code)
+        sleep.assert_awaited_once_with(0.1)
+
+    async def test_exhausted_transport_error_propagates(self):
+        session = Mock()
+        session.get.side_effect = httpx2.ConnectError('offline')
+        client = Client('key', session)
+        client.configure_get_retries(1, backoff=0)
+        with patch('schwab.client.synchronous.time.sleep'):
+            with self.assertRaises(httpx2.ConnectError):
+                client._get_request('/test', {})
+        self.assertEqual(2, session.get.call_count)
+
     async def test_async_retry_obeys_retry_after(self):
         session = Mock()
         session.get = AsyncMock(side_effect=[

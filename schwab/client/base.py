@@ -9,6 +9,7 @@ import datetime
 import email.utils
 import logging
 import math
+import random
 import warnings
 import re
 import threading
@@ -160,7 +161,8 @@ class BaseClient(EnumEnforcer, ABC):
 
     def configure_get_retries(self, max_retries: int = 0, *, backoff: float = 0.5,
                               max_delay: float = 30.0) -> None:
-        '''Opt into retries for GET responses with status 429, 500, 502, 503 or 504.
+        '''Opt into retries for transient GET transport failures and responses
+        with status 429, 500, 502, 503 or 504.
 
         Retry-After is respected; a delay greater than max_delay stops retries.
         Configure this before sharing the client between threads or tasks.
@@ -176,10 +178,10 @@ class BaseClient(EnumEnforcer, ABC):
         self._get_retry_max_delay = max_delay
 
     def _get_retry_delay(self, response, attempt):
-        if (attempt >= self._get_retry_count
-                or response.status_code not in (429, 500, 502, 503, 504)):
+        if (attempt >= self._get_retry_count or (response is not None
+                and response.status_code not in (429, 500, 502, 503, 504))):
             return None
-        value = response.headers.get('Retry-After')
+        value = response.headers.get('Retry-After') if response is not None else None
         delay = min(self._get_retry_backoff * (2 ** min(attempt, 30)),
                     self._get_retry_max_delay)
         if value:
@@ -196,7 +198,7 @@ class BaseClient(EnumEnforcer, ABC):
             if not math.isfinite(delay) or delay > self._get_retry_max_delay:
                 return None
             delay = max(0.0, delay)
-        return delay
+        return delay if value else random.uniform(0, delay)
 
     def _assert_type(self, name, value, exp_types):
         if any(isinstance(value, t) for t in exp_types):

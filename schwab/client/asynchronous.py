@@ -1,5 +1,6 @@
 from .base import BaseClient
 import asyncio
+import httpx2
 
 
 class AsyncClient(BaseClient):
@@ -14,7 +15,15 @@ class AsyncClient(BaseClient):
 
         attempt = 0
         while True:
-            resp = await self.session.get(dest, params=params)
+            try:
+                resp = await self.session.get(dest, params=params)
+            except (httpx2.NetworkError, httpx2.TimeoutException):
+                delay = self._get_retry_delay(None, attempt)
+                if delay is None:
+                    raise
+                await asyncio.sleep(delay)
+                attempt += 1
+                continue
             delay = self._get_retry_delay(resp, attempt)
             if delay is None:
                 break

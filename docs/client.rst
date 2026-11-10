@@ -479,9 +479,9 @@ place. Forwarding a value does not guarantee that the API accepts it.
 GET retries
 +++++++++++++++
 
-GET retries are disabled by default. To retry rate limits and selected server
-errors, call ``client.configure_get_retries(max_retries=3)``. Backoff is bounded
-by ``max_delay``; when a server's Retry-After exceeds that limit, the response is
-returned without retrying. Other HTTP methods and transport errors are not
-retried.
+GET retries are disabled by default. To retry transient network errors and
+timeouts, rate limits, and selected server errors, call
+``client.configure_get_retries(max_retries=3)``. Exponential backoff uses jitter
+and is bounded by ``max_delay``; when a server's Retry-After exceeds that limit,
+the response is returned without retrying. Other HTTP methods are not retried.
 

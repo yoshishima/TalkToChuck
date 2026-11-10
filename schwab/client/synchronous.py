@@ -1,5 +1,6 @@
 from .base import BaseClient
 import time
+import httpx2
 
 
 class Client(BaseClient):
@@ -16,7 +17,15 @@ class Client(BaseClient):
 
         attempt = 0
         while True:
-            resp = self.session.get(dest, params=params)
+            try:
+                resp = self.session.get(dest, params=params)
+            except (httpx2.NetworkError, httpx2.TimeoutException):
+                delay = self._get_retry_delay(None, attempt)
+                if delay is None:
+                    raise
+                time.sleep(delay)
+                attempt += 1
+                continue
             delay = self._get_retry_delay(resp, attempt)
             if delay is None:
                 break
