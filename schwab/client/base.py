@@ -6,7 +6,9 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 import datetime
+import email.utils
 import logging
+import math
 import warnings
 import re
 import threading
@@ -82,6 +84,9 @@ class BaseClient(EnumEnforcer, ABC):
         self.logger = get_logger()
         self.request_number = 0
         self._request_number_lock = threading.Lock()
+        self._get_retry_count = 0
+        self._get_retry_backoff = 0.5
+        self._get_retry_max_delay = 30.0
 
         schwab.LOG_REDACTOR.register(api_key, 'API_KEY')
 
@@ -152,6 +157,45 @@ class BaseClient(EnumEnforcer, ABC):
         with self._request_number_lock:
             self.request_number += 1
             return self.request_number
+
+    def configure_get_retries(self, max_retries=0, *, backoff=0.5, max_delay=30.0):
+        '''Opt into retries for GET responses with status 429, 500, 502, 503 or 504.
+
+        Retry-After is respected; a delay greater than max_delay stops retries.
+        Configure this before sharing the client between threads or tasks.
+        '''
+        if type(max_retries) is not int or max_retries < 0:
+            raise ValueError('max_retries must be a nonnegative integer')
+        for name, value in (('backoff', backoff), ('max_delay', max_delay)):
+            if (type(value) not in (int, float) or not math.isfinite(value)
+                    or value < 0):
+                raise ValueError('{} must be a nonnegative finite number'.format(name))
+        self._get_retry_count = max_retries
+        self._get_retry_backoff = backoff
+        self._get_retry_max_delay = max_delay
+
+    def _get_retry_delay(self, response, attempt):
+        if (attempt >= self._get_retry_count
+                or response.status_code not in (429, 500, 502, 503, 504)):
+            return None
+        value = response.headers.get('Retry-After')
+        delay = min(self._get_retry_backoff * (2 ** min(attempt, 30)),
+                    self._get_retry_max_delay)
+        if value:
+            try:
+                delay = float(value)
+            except ValueError:
+                try:
+                    when = email.utils.parsedate_to_datetime(value)
+                    if when.tzinfo is None:
+                        when = when.replace(tzinfo=datetime.timezone.utc)
+                    delay = (when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+                except (TypeError, ValueError, OverflowError):
+                    return None
+            if not math.isfinite(delay) or delay > self._get_retry_max_delay:
+                return None
+            delay = max(0.0, delay)
+        return delay
 
     def _assert_type(self, name, value, exp_types):
         if any(isinstance(value, t) for t in exp_types):

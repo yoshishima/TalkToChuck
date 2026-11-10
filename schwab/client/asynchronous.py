@@ -1,4 +1,5 @@
 from .base import BaseClient
+import asyncio
 
 
 class AsyncClient(BaseClient):
@@ -11,7 +12,15 @@ class AsyncClient(BaseClient):
 
         req_num = self._log_request('GET', dest, params)
 
-        resp = await self.session.get(dest, params=params)
+        attempt = 0
+        while True:
+            resp = await self.session.get(dest, params=params)
+            delay = self._get_retry_delay(resp, attempt)
+            if delay is None:
+                break
+            await resp.aclose()
+            await asyncio.sleep(delay)
+            attempt += 1
         self._log_response(resp, req_num)
         return resp
 

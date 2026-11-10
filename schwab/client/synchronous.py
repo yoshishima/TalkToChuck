@@ -1,4 +1,5 @@
 from .base import BaseClient
+import time
 
 
 class Client(BaseClient):
@@ -13,7 +14,15 @@ class Client(BaseClient):
 
         req_num = self._log_request('GET', dest, params)
 
-        resp = self.session.get(dest, params=params)
+        attempt = 0
+        while True:
+            resp = self.session.get(dest, params=params)
+            delay = self._get_retry_delay(resp, attempt)
+            if delay is None:
+                break
+            resp.close()
+            time.sleep(delay)
+            attempt += 1
         self._log_response(resp, req_num)
         return resp
 
