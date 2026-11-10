@@ -172,6 +172,11 @@ of other types produced by a custom decoder, such as ``Decimal`` or
 ``OrderedDict``, are copied with :func:`copy.deepcopy`. Objects that a custom
 decoder shares between several places in one message become separate copies.
 
+Applications that treat handler messages as read-only may pass
+``copy_messages=False`` to share each relabeled message between handlers and
+avoid per-handler copies. Mutating a shared message can affect other handlers
+and a dispatch resumed after cancellation. The default preserves isolation.
+
 Asynchronous handlers run in background tasks. By default, a ``StreamClient``
 allows at most 100 pending handler tasks across all services. Set the positive
 integer ``max_pending_handler_tasks`` constructor argument to adjust this limit.

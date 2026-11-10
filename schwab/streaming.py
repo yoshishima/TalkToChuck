@@ -211,8 +211,12 @@ class StreamClient(EnumEnforcer):
                  enforce_enums=True, ssl_context=None, response_timeout=30.0,
                  max_pending_handler_tasks=100, max_pending_messages=1000,
                  offload_sync_preferences=False, on_handler_error=None,
-                 sequential_handler_services=()):
+                 sequential_handler_services=(), copy_messages=True):
         super().__init__(enforce_enums)
+
+        if type(copy_messages) is not bool:
+            raise ValueError('copy_messages must be a bool')
+        self._copy_messages = copy_messages
 
         if on_handler_error is not None and (
                 not callable(on_handler_error)
@@ -773,7 +777,8 @@ class StreamClient(EnumEnforcer):
                 # so cancellation can safely resume a pending dispatch.
                 use_owned_message = owns_message and index == len(handlers) - 1
                 handler_message = (
-                    message if use_owned_message else _copy_message(message))
+                    message if use_owned_message or not self._copy_messages
+                    else _copy_message(message))
                 result = handler(handler_message)
                 if inspect.isawaitable(result):
                     task = self._schedule_handler(service, result)
