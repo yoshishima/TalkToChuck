@@ -436,7 +436,7 @@ def _wait_for_callback_server(server, callback_port, readiness_token):
 __TIME_TIME = time.time
 
 def client_from_login_flow(api_key, app_secret, callback_url, token_path,
-                           asyncio=False, enforce_enums=False, 
+                           asyncio=False, enforce_enums=True,
                            token_write_func=None, callback_timeout=300.0,
                            interactive=True, requested_browser=None):
     '''

@@ -72,6 +72,10 @@ Fetching a Token and Creating a Client
 This function will guide you through the process of logging in and creating a 
 token.
 
+``client_from_login_flow`` now enforces enum arguments by default, like the
+other client factories. Existing applications passing raw enum values can set
+``enforce_enums=False`` to retain the previous behavior.
+
 .. autofunction:: schwab.auth.client_from_login_flow
 
 .. _manual_login:
