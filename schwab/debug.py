@@ -196,7 +196,7 @@ def _redact_json(payload):
         if isinstance(value, str):
             return schwab.LOG_REDACTOR.redact(redactor.redact(value))
         return value
-    text = json.dumps(sanitize(payload), indent=4, default=_log_default)
+    text = json.dumps(sanitize(payload), default=_log_default)
     return schwab.LOG_REDACTOR.redact(text)
 
 
