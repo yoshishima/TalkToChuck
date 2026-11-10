@@ -142,12 +142,12 @@ class RedactionTest(unittest.TestCase):
         redactor.register('100', 'chain-2024-01-19-100.0-bid', persistent=False)
         redactor.register('0', 'chain-2024-10-01-0-bidSize', persistent=False)
         redactor.register('1', 'chain-2024-11-01-1-askSize', persistent=False)
-        line = 'Req 7: response 200 for 100 contracts at 1.10'
+        line = 'Req 7: response 200 for 100 contracts at 1.10, 0 or 1'
         redacted = redactor.redact(line)
         # Each original occurrence becomes exactly one placeholder.
-        self.assertEqual(redacted.count('<REDACTED'),
-                         line.count('100') + line.replace('100', '').count('0')
-                         + line.replace('100', '').count('1'))
+        self.assertEqual(redacted.count('<REDACTED'), 3)
+        self.assertIn('response 200', redacted)
+        self.assertIn('at 1.10', redacted)
         self.assertLess(len(redacted), 20 * len(line))
 
     def test_option_chain_redaction_stays_bounded(self):
@@ -181,7 +181,7 @@ class RedactionTest(unittest.TestCase):
              'firstName': 'Al'},
             redactor=redactor)
         self.assertEqual(
-            {'SYNTH-ACCOUNT-1', 'synthuser', '12345.67', 'XNAS', 'Al'},
+            {'SYNTH-ACCOUNT-1', 'synthuser', 'XNAS', 'Al'},
             set(redactor.redacted_strings))
 
     def test_booleans_and_single_characters_are_not_registered(self):

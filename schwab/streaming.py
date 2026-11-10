@@ -325,7 +325,7 @@ class StreamClient(EnumEnforcer):
                 'Socket not open. Did you forget to call login()?')
 
         self.logger.debug('Send %s: Sending %s',
-                self.req_num(), LazyLog(lambda: redact_json(obj)))
+                self.req_num(), LazyLog(lambda: redact_json(obj, stream=True)))
 
         await self._socket.send(json.dumps(obj))
 
@@ -354,7 +354,7 @@ class StreamClient(EnumEnforcer):
 
         self.logger.debug(
             'Receive %s: Returning message from stream: %s',
-            self.req_num(), LazyLog(lambda: redact_json(ret)))
+            self.req_num(), LazyLog(lambda: redact_json(ret, stream=True)))
 
         return ret
 
@@ -583,7 +583,7 @@ class StreamClient(EnumEnforcer):
                                     'Ignoring late response for request %s: '
                                     '%s',
                                     response_request_id,
-                                    LazyLog(lambda msg=msg: redact_json(msg)))
+                                    LazyLog(lambda msg=msg: redact_json(msg, stream=True)))
                         # Preserve the historical behavior for malformed or
                         # future response IDs: the sole request waiter receives
                         # the response and raises UnexpectedResponse during
@@ -873,7 +873,7 @@ class StreamClient(EnumEnforcer):
                     self.logger.warning(
                             'Ignoring stream entry without a valid service: '
                             '%s',
-                            LazyLog(lambda entry=entry: redact_json(entry)))
+                            LazyLog(lambda entry=entry: redact_json(entry, stream=True)))
                 msg.next_event += 1
                 msg.next_handler = 0
                 msg.handlers = None

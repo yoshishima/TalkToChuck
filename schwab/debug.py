@@ -169,20 +169,20 @@ def get_redacted_logger(name):
     return logger
 
 
-def redact_json(payload):
+def redact_json(payload, *, stream=False):
     '''Sanitize structured payloads without retaining their values globally.
 
     Never raises: payloads that cannot be rendered, such as cyclic ones, are
     replaced by a short marker so that logging cannot change behaviour.'''
     try:
-        return _redact_json(payload)
+        return _redact_json(payload, stream=stream)
     except (TypeError, ValueError, RecursionError) as e:
         return '<unloggable payload: {}>'.format(type(e).__name__)
 
 
-def _redact_json(payload):
+def _redact_json(payload, *, stream=False):
     redactor = LogRedactor()
-    register_redactions(payload, redactor=redactor)
+    register_redactions(payload, redactor=redactor, stream=stream)
     # Redact values before serialization as well as afterwards, so escaped
     # quotes, backslashes and Unicode cannot bypass string replacement.
     def sanitize(value):
@@ -319,7 +319,15 @@ class LogRedactor:
         for string, (label, count) in entries:
             if string not in msg:
                 continue
-            msg = msg.replace(string, chr(_SENTINEL_BASE + len(placeholders)))
+            sentinel = chr(_SENTINEL_BASE + len(placeholders))
+            if len(string) <= 4 and string.isdecimal():
+                msg, replacements = re.subn(
+                    r'(?<![\d.])' + re.escape(string) + r'(?![\d.])',
+                    lambda _: sentinel, msg)
+                if not replacements:
+                    continue
+            else:
+                msg = msg.replace(string, sentinel)
             placeholders.append(self._placeholder(label, count))
         for index, placeholder in enumerate(placeholders):
             msg = msg.replace(chr(_SENTINEL_BASE + index), placeholder)
@@ -333,7 +341,12 @@ class LogRedactor:
         # Fallback for messages that already contain private-use characters.
         for string, (label, count) in self._sorted_redactions:
             if string in msg:
-                msg = msg.replace(string, self._placeholder(label, count))
+                if len(string) <= 4 and string.isdecimal():
+                    msg = re.sub(
+                        r'(?<![\d.])' + re.escape(string) + r'(?![\d.])',
+                        lambda _: self._placeholder(label, count), msg)
+                else:
+                    msg = msg.replace(string, self._placeholder(label, count))
         return msg
 
 
@@ -381,7 +394,7 @@ def register_redactions(obj, key_path=None,
                             'bidsizeinlong',
                             'bidsizeindouble',
                             'bidpriceindouble')),
-                        *, persistent=True, redactor=None):
+                        *, persistent=True, redactor=None, stream=False):
     '''
     Recursively iterates through the leaf elements of ``obj`` and registers
     elements with keys or ancestor keys matching a blacklist with the supplied
@@ -396,7 +409,7 @@ def register_redactions(obj, key_path=None,
     sensitive_names = {}
 
     def sensitive_key(key):
-        name = str(key).lower()
+        name = str(key)
         if name.isdecimal():
             return False
         if name not in sensitive_names:
@@ -404,13 +417,19 @@ def register_redactions(obj, key_path=None,
                 name, bad_patterns, whitelisted)
         return sensitive_names[name]
 
-    def visit(value, sensitive):
+    def visit(value, sensitive, service=None):
         if isinstance(value, (list, dict)):
+            if isinstance(value, dict):
+                service = value.get('service', service)
             items = enumerate(value) if isinstance(value, list) else value.items()
             for key, child in items:
                 key_path.append(str(key) if isinstance(value, list) else key)
                 try:
-                    if not visit(child, sensitive or sensitive_key(key)):
+                    market_key = (stream and isinstance(service, str)
+                                  and service not in ('ACCT_ACTIVITY', 'ADMIN')
+                                  and key in ('key', 'keys'))
+                    if not visit(child, sensitive or (
+                            not market_key and sensitive_key(key)), service):
                         return False
                 finally:
                     key_path.pop()
@@ -427,11 +446,22 @@ def register_redactions(obj, key_path=None,
 
 
 def _is_sensitive_name(name, bad_patterns, whitelisted):
-    if name in whitelisted:
+    lower_name = name.lower()
+    if lower_name in whitelisted:
         return False
+    tokens = re.findall(r'[A-Z]+(?=[A-Z][a-z]|\b)|[A-Z]?[a-z]+|\d+', name)
+    tokens = [token.lower() for token in tokens]
     for word in _NON_IDENTIFIER_WORDS:
-        name = name.replace(word, '')
-    return any(bad in name for bad in bad_patterns)
+        lower_name = lower_name.replace(word, '')
+        tokens = [token for token in tokens if token != word]
+    for bad in bad_patterns:
+        if bad in ('id', 'key'):
+            if (bad in tokens or lower_name.endswith(bad)
+                    or (bad == 'key' and 'keys' in tokens)):
+                return True
+        elif bad in lower_name:
+            return True
+    return False
 
 
 def enable_bug_report_logging():
