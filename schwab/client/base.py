@@ -1294,7 +1294,7 @@ class BaseClient(EnumEnforcer, ABC):
         to get fundamental instrument data by use of the ``FUNDAMENTAL`` 
         projection.
 
-        :param symbol: For ``FUNDAMENTAL`` projection, the symbol for which to 
+        :param symbols: For ``FUNDAMENTAL`` projection, the symbol for which to
                        get fundamentals. For other projections, a search term. 
                        See below for details.
         :param projection: Search mode, or ``FUNDAMENTAL`` for instrument 

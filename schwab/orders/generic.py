@@ -486,7 +486,7 @@ class OrderBuilder(EnumEnforcer):
 
     def copy_price(self, price):
         '''
-        Directly set the stop price, avoiding all the validation and truncation
+        Directly set the price, avoiding all the validation and truncation
         logic from :func:`set_price`.
         '''
         self._price = _copy_price_value(price)
