@@ -193,6 +193,14 @@ a subscription is waiting for its acknowledgement. Concurrent calls to
 ``handle_message()`` serialize message delivery and handler dispatch to preserve
 this order. Asynchronous handler completion order remains independent.
 
+To process asynchronous handlers for a service sequentially, pass for example
+``sequential_handler_services={'ACCT_ACTIVITY'}`` to ``StreamClient``. Tasks
+for that service acquire a shared lock in dispatch order; other services remain
+independent. The pending-task limit still applies, so slow handlers impose
+backpressure. Synchronous handlers must themselves complete promptly.
+Use coroutine functions for sequential handlers: a handler that starts a task
+itself before returning it can perform side effects before the lock is acquired.
+
 Logout or reconnect causes pending message consumers and subscription requests
 from the previous connection to raise ``schwab.streaming.StreamClosedError``,
 a subclass of ``ConnectionError``. This includes consumers waiting for dispatch

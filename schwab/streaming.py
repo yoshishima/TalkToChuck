@@ -210,7 +210,8 @@ class StreamClient(EnumEnforcer):
     def __init__(self, client, *, account_id=None,
                  enforce_enums=True, ssl_context=None, response_timeout=30.0,
                  max_pending_handler_tasks=100, max_pending_messages=1000,
-                 offload_sync_preferences=False, on_handler_error=None):
+                 offload_sync_preferences=False, on_handler_error=None,
+                 sequential_handler_services=()):
         super().__init__(enforce_enums)
 
         if on_handler_error is not None and (
@@ -220,6 +221,12 @@ class StreamClient(EnumEnforcer):
                     getattr(on_handler_error, '__call__', None))):
             raise ValueError('on_handler_error must be a synchronous callable or None')
         self._on_handler_error = on_handler_error
+        if isinstance(sequential_handler_services, str):
+            raise ValueError('sequential_handler_services must be an iterable of service names')
+        self._sequential_handler_services = frozenset(sequential_handler_services)
+        if not all(isinstance(service, str) for service in self._sequential_handler_services):
+            raise ValueError('sequential_handler_services must contain strings')
+        self._service_handler_locks = {}
 
         if type(offload_sync_preferences) is not bool:
             raise ValueError('offload_sync_preferences must be a bool')
@@ -684,6 +691,40 @@ class StreamClient(EnumEnforcer):
             self._log_handler_exception(
                     'Asynchronous stream handler failed', exception)
 
+    def _schedule_handler(self, service, result):
+        if service not in self._sequential_handler_services:
+            return asyncio.ensure_future(result)
+        lock = self._service_handler_locks.setdefault(service, asyncio.Lock())
+        started = False
+        disposed = False
+
+        def dispose_unstarted():
+            nonlocal disposed
+            if started or disposed:
+                return
+            disposed = True
+            close = getattr(result, 'close', None)
+            if close is not None:
+                close()
+            elif isinstance(result, asyncio.Future):
+                result.cancel()
+
+        async def run_in_order():
+            nonlocal started
+            try:
+                async with lock:
+                    started = True
+                    await result
+            finally:
+                dispose_unstarted()
+
+        task = asyncio.ensure_future(run_in_order())
+        # A task cancelled before its first step never enters the finally block.
+        def cleanup_unstarted(_):
+            dispose_unstarted()
+        task.add_done_callback(cleanup_unstarted)
+        return task
+
     def _log_handler_exception(self, message, exception):
         self.logger.error(
                 message,
@@ -735,7 +776,7 @@ class StreamClient(EnumEnforcer):
                     message if use_owned_message else _copy_message(message))
                 result = handler(handler_message)
                 if inspect.isawaitable(result):
-                    task = asyncio.ensure_future(result)
+                    task = self._schedule_handler(service, result)
                     self._handler_tasks.add(task)
                     task.add_done_callback(self._handler_task_done)
                     release_slot = False
