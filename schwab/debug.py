@@ -30,6 +30,55 @@ _SENTINEL_RE = re.compile('[\U000F0000-\U0010FFFF]')
 _NON_IDENTIFIER_WORDS = ('bid', 'mid')
 
 
+def _build_secret_matcher(entries):
+    # Aho-Corasick: terminal links avoid copying all suffix outputs into nodes.
+    transitions = [{}]
+    failures = [0]
+    terminals = [None]
+    output_links = [0]
+    for index, (secret, _) in enumerate(entries):
+        node = 0
+        for char in secret:
+            child = transitions[node].get(char)
+            if child is None:
+                child = len(transitions)
+                transitions[node][char] = child
+                transitions.append({})
+                failures.append(0)
+                terminals.append(None)
+                output_links.append(0)
+            node = child
+        terminals[node] = index
+    pending = deque(transitions[0].values())
+    while pending:
+        node = pending.popleft()
+        for char, child in transitions[node].items():
+            pending.append(child)
+            fallback = failures[node]
+            while fallback and char not in transitions[fallback]:
+                fallback = failures[fallback]
+            failures[child] = transitions[fallback].get(char, 0)
+            target = failures[child]
+            output_links[child] = target if terminals[target] is not None else output_links[target]
+    return transitions, failures, terminals, output_links
+
+
+def _matching_secret_indices(matcher, message):
+    transitions, failures, terminals, output_links = matcher
+    found = set()
+    node = 0
+    for char in message:
+        while node and char not in transitions[node]:
+            node = failures[node]
+        node = transitions[node].get(char, 0)
+        output = node
+        while output:
+            if terminals[output] is not None:
+                found.add(terminals[output])
+            output = output_links[output]
+    return found
+
+
 def get_logger():
     return get_redacted_logger(__name__)
 
@@ -180,6 +229,8 @@ class LogRedactor:
         # values are kept; superseded tokens have expired.
         self._persistent_by_label = defaultdict(deque)
         self._sorted_redactions = None
+        self._secret_matcher = None
+        self._matcher_safe = False
         self._transient_limit_reached = False
 
     def register(self, string, label, *, persistent=True):
@@ -246,6 +297,9 @@ class LogRedactor:
             self._sorted_redactions = sorted(
                     self.redacted_strings.items(),
                     key=lambda item: -len(item[0]))
+            self._secret_matcher = None
+            self._matcher_safe = not any(
+                _SENTINEL_RE.search(secret) for secret, _ in self._sorted_redactions)
         if not self._sorted_redactions:
             return msg
         if (len(self._sorted_redactions) > _SENTINEL_LIMIT
@@ -255,8 +309,14 @@ class LogRedactor:
         # Phase 1 swaps each present string for a unique sentinel character,
         # longest first, so shorter strings cannot match inside longer ones.
         # Phase 2 swaps sentinels for placeholders, which are never rescanned.
+        entries = self._sorted_redactions
+        if len(entries) >= 100 and self._matcher_safe:
+            if self._secret_matcher is None:
+                self._secret_matcher = _build_secret_matcher(entries)
+            indices = _matching_secret_indices(self._secret_matcher, msg)
+            entries = [entries[index] for index in sorted(indices)]
         placeholders = []
-        for string, (label, count) in self._sorted_redactions:
+        for string, (label, count) in entries:
             if string not in msg:
                 continue
             msg = msg.replace(string, chr(_SENTINEL_BASE + len(placeholders)))
