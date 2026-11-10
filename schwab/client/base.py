@@ -200,6 +200,19 @@ class BaseClient(EnumEnforcer, ABC):
             delay = max(0.0, delay)
         return delay if value else random.uniform(0, delay)
 
+    def _get_transport_retry_delay(self, exc, dest, attempt):
+        # A GET can first trigger an OAuth refresh. Never replay a failed
+        # refresh POST as though it were the requested GET.
+        try:
+            request = exc.request
+        except RuntimeError:
+            request = None
+        if (request is not None and
+                (request.method != 'GET'
+                 or str(request.url).split('?', 1)[0] != dest)):
+            return None
+        return self._get_retry_delay(None, attempt)
+
     def _assert_type(self, name, value, exp_types):
         if any(isinstance(value, t) for t in exp_types):
             return

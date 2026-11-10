@@ -38,6 +38,16 @@ class GetRetryTest(unittest.IsolatedAsyncioTestCase):
                 client._get_request('/test', {})
         self.assertEqual(2, session.get.call_count)
 
+    async def test_does_not_replay_an_oauth_refresh_post(self):
+        session = Mock()
+        request = httpx2.Request('POST', 'https://api.schwabapi.com/v1/oauth/token')
+        session.get.side_effect = httpx2.ReadTimeout('refresh timed out', request=request)
+        client = Client('key', session)
+        client.configure_get_retries(2)
+        with self.assertRaises(httpx2.ReadTimeout):
+            client._get_request('/test', {})
+        self.assertEqual(1, session.get.call_count)
+
     async def test_async_retry_obeys_retry_after(self):
         session = Mock()
         session.get = AsyncMock(side_effect=[

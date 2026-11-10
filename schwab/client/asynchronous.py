@@ -17,8 +17,8 @@ class AsyncClient(BaseClient):
         while True:
             try:
                 resp = await self.session.get(dest, params=params)
-            except (httpx2.NetworkError, httpx2.TimeoutException):
-                delay = self._get_retry_delay(None, attempt)
+            except (httpx2.NetworkError, httpx2.TimeoutException) as exc:
+                delay = self._get_transport_retry_delay(exc, dest, attempt)
                 if delay is None:
                     raise
                 await asyncio.sleep(delay)
