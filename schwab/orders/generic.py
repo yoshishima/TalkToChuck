@@ -106,13 +106,15 @@ def _format_price_input(price):
         raise ValueError('price must not be negative')
     if isinstance(price, Decimal):
         return _format_numeric_price(price)
-    return truncate_float(price)
+    return truncate_float(price, stacklevel=4)
 
 
-def truncate_float(flt):
-    warnings.warn('passing floats to set_price and set_stop_price is '+
-                  'deprecated and will be removed soon. Please update your '+
-                  'code to pass prices as strings instead.')
+def truncate_float(flt, *, stacklevel=2):
+    if isinstance(flt, float):
+        warnings.warn('passing floats to set_price and set_stop_price is '+
+                      'deprecated and will be removed soon. Please update your '+
+                      'code to pass prices as strings instead.',
+                      DeprecationWarning, stacklevel=stacklevel)
 
     return _format_numeric_price(flt)
 
