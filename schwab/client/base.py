@@ -9,6 +9,7 @@ import datetime
 import logging
 import warnings
 import re
+import threading
 import schwab
 from urllib.parse import quote
 
@@ -80,6 +81,7 @@ class BaseClient(EnumEnforcer, ABC):
         # Logging-related fields
         self.logger = get_logger()
         self.request_number = 0
+        self._request_number_lock = threading.Lock()
 
         schwab.LOG_REDACTOR.register(api_key, 'API_KEY')
 
@@ -147,8 +149,9 @@ class BaseClient(EnumEnforcer, ABC):
             req_num, resp.status_code, response_text)
 
     def _req_num(self):
-        self.request_number += 1
-        return self.request_number
+        with self._request_number_lock:
+            self.request_number += 1
+            return self.request_number
 
     def _assert_type(self, name, value, exp_types):
         if any(isinstance(value, t) for t in exp_types):
