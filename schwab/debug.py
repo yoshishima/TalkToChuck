@@ -30,6 +30,11 @@ _SENTINEL_RE = re.compile('[\U000F0000-\U0010FFFF]')
 # Market-data words that contain "id" without being identifiers, such as
 # "bidPrice" or "midPrice". Removed before matching sensitive key patterns.
 _NON_IDENTIFIER_WORDS = ('bid', 'mid')
+_MARKET_STREAM_SERVICES = frozenset((
+    'CHART_EQUITY', 'CHART_FUTURES', 'LEVELONE_EQUITIES', 'LEVELONE_FOREX',
+    'LEVELONE_FUTURES', 'LEVELONE_FUTURES_OPTIONS', 'LEVELONE_OPTIONS',
+    'NASDAQ_BOOK', 'NYSE_BOOK', 'OPTIONS_BOOK', 'SCREENER_EQUITY',
+    'SCREENER_OPTION'))
 
 
 def _build_secret_matcher(entries):
@@ -441,7 +446,7 @@ def register_redactions(obj, key_path=None,
                 key_path.append(str(key) if isinstance(value, list) else key)
                 try:
                     market_key = (stream and isinstance(service, str)
-                                  and service not in ('ACCT_ACTIVITY', 'ADMIN')
+                                  and service in _MARKET_STREAM_SERVICES
                                   and key in ('key', 'keys'))
                     if not visit(child, sensitive or (
                             not market_key and sensitive_key(key)), service):

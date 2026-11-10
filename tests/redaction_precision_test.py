@@ -1,10 +1,17 @@
 import json
 import unittest
+from unittest.mock import patch
 
+import schwab
 from schwab.debug import LogRedactor, redact_json, register_redactions
 
 
 class RedactionPrecisionTest(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(schwab, 'LOG_REDACTOR', LogRedactor())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_market_fields_and_symbols_remain_useful(self):
         payload = {'data': [{'service': 'LEVELONE_EQUITIES', 'key': 'AAPL',
                              'dividendAmount': 100, 'liquidationValue': 100,
@@ -20,6 +27,8 @@ class RedactionPrecisionTest(unittest.TestCase):
                                  'parameters': {'keys': 'private-correl-id'}}]}
         self.assertNotIn('private-correl-id', redact_json(payload, stream=True))
         self.assertNotIn('private-key', redact_json({'apiKey': 'private-key'}))
+        unknown = {'service': 'UNKNOWN', 'key': 'private-stream-key'}
+        self.assertNotIn('private-stream-key', redact_json(unknown, stream=True))
 
     def test_short_numeric_identifier_does_not_redact_larger_number(self):
         redactor = LogRedactor()
