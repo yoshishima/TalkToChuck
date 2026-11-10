@@ -274,7 +274,9 @@ class StreamClient(EnumEnforcer):
         self._request_id = 0
         self._handlers = defaultdict(list)
         self._handler_tasks = set()
+        self._max_pending_handler_tasks = max_pending_handler_tasks
         self._handler_slots = asyncio.Semaphore(max_pending_handler_tasks)
+        self._event_loop = None
         self._connection_generation = 0
         self._response_timeout = response_timeout
 
@@ -597,17 +599,22 @@ class StreamClient(EnumEnforcer):
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
+            delivered = False
             for waiter in self._response_waiters.values():
                 if not waiter.done():
                     waiter.set_exception(exc)
+                    delivered = True
             for waiter in self._message_waiters:
                 if not waiter.done():
                     waiter.set_exception(exc)
+                    delivered = True
             self._response_waiters.clear()
             self._message_waiters.clear()
             if isinstance(exc, StreamBufferOverflowError):
                 self.logger.error('Closing stream: pending message buffer is full')
                 await self._close_connection()
+            elif not delivered:
+                self.logger.exception('Stream reader failed without an active waiter')
         finally:
             self._reader_wakeup.clear()
             self._reader_task = None
@@ -918,6 +925,19 @@ class StreamClient(EnumEnforcer):
                                        documentation <https://websockets.readthedocs.io/en/stable/reference/client.html#websockets.client.connect>`__
                                        for details.
         '''
+
+        loop = asyncio.get_running_loop()
+        if self._event_loop is not None and self._event_loop is not loop:
+            if ((self._reader_task is not None and not self._reader_task.done())
+                    or any(not task.done() for task in self._handler_tasks)):
+                raise RuntimeError('Close the stream on its original event loop '
+                                   'before using it on another event loop')
+            self._handler_slots = asyncio.Semaphore(self._max_pending_handler_tasks)
+            self._send_lock = asyncio.Lock()
+            self._dispatch_lock = asyncio.Lock()
+            self._reader_wakeup = asyncio.Event()
+            self._service_handler_locks.clear()
+        self._event_loop = loop
 
         # Fetch required data and initialize the client
         if isinstance(self._client, Client) and not self._offload_sync_preferences:
