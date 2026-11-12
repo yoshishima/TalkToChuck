@@ -625,6 +625,10 @@ class StreamClient(EnumEnforcer):
                     except UnparsableMessage as exc:
                         # Preserve FIFO delivery without failing acknowledgement
                         # waiters. The next message consumer raises this marker.
+                        # Do not share this suspended reader frame with the
+                        # consumer via the exception traceback: code that clears
+                        # traceback frames can otherwise close the live reader.
+                        exc.__traceback__ = None
                         self._buffer_message(exc)
                         continue
 

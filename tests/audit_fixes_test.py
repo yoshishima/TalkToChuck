@@ -385,6 +385,32 @@ class TokenPathPreflightTest(unittest.TestCase):
 # ---------------------------------------------------------------- D5 decoders
 class DecoderErrorTest(unittest.IsolatedAsyncioTestCase):
 
+    async def test_reader_survives_clearing_a_delivered_parse_error_traceback(self):
+        import traceback
+        stream = StreamClient(Mock())
+        socket = AsyncMock()
+        socket.recv.side_effect = [
+            '{bad',
+            json.dumps({'data': [{'service': 'LEVELONE_EQUITIES',
+                                  'content': [{'1': 42}]}]}),
+        ]
+        stream._socket = socket
+        received = []
+        stream.add_level_one_equity_handler(received.append)
+        try:
+            try:
+                await stream.handle_message()
+            except UnparsableMessage as error:
+                frames = traceback.extract_tb(error.__traceback__)
+                self.assertNotIn('_reader_loop', [frame.name for frame in frames])
+                traceback.clear_frames(error.__traceback__)
+            else:
+                self.fail('Expected an UnparsableMessage')
+            await asyncio.wait_for(stream.handle_message(), timeout=1)
+            self.assertEqual(received[0]['content'][0]['BID_PRICE'], 42)
+        finally:
+            await stream._close_connection()
+
     async def test_any_decoder_exception_becomes_unparsable_message(self):
         for error in (ValueError('synthetic'), TypeError('synthetic')):
             with self.subTest(error=type(error).__name__):
