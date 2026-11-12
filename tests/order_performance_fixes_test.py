@@ -110,3 +110,44 @@ class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
                         await client.close_async_session()
                     else:
                         client.close_session()
+
+class EventLoopOrderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_client_warns_when_called_on_event_loop(self):
+        import httpx2
+        from schwab.client import Client
+        session = Mock()
+        session.post.return_value = httpx2.Response(201)
+        client = Client('key', session)
+        with self.assertWarnsRegex(RuntimeWarning, 'blocks the event loop'):
+            client.place_order('account', {})
+
+    async def test_threaded_order_keeps_loop_responsive(self):
+        import asyncio
+        import threading
+        import httpx2
+        from schwab.client import Client
+        started, release = threading.Event(), threading.Event()
+        session = Mock()
+        def post(*args, **kwargs):
+            started.set()
+            release.wait(2)
+            return httpx2.Response(201)
+        session.post.side_effect = post
+        client = Client('key', session)
+        task = asyncio.create_task(client.async_place_order('account', {}))
+        try:
+            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+            self.assertFalse(task.done())
+        finally:
+            release.set()
+        self.assertEqual((await asyncio.wait_for(task, 1)).status_code, 201)
+        session.post.assert_called_once()
+
+    async def test_threaded_cancel_preserves_order_id_and_account_arguments(self):
+        import httpx2
+        from schwab.client import Client
+        session = Mock()
+        session.delete.return_value = httpx2.Response(200)
+        client = Client('key', session)
+        await client.async_cancel_order('order-1', 'account-2')
+        self.assertIn('/accounts/account-2/orders/order-1', session.delete.call_args.args[0])

@@ -1,6 +1,8 @@
 from .base import BaseClient
+import asyncio
 import time
 import threading
+import warnings
 import httpx2
 
 
@@ -49,7 +51,31 @@ class Client(BaseClient):
         self.stop_token_refresh()
         self.session.close()
 
+    @staticmethod
+    def _warn_if_event_loop_running():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        warnings.warn(
+            'A synchronous Schwab client blocks the event loop; use AsyncClient '
+            'or run the call in a worker thread.', RuntimeWarning, stacklevel=4)
+
+    async def async_place_order(self, account_hash, order_spec):
+        '''Run place_order in a worker thread without blocking the event loop.'''
+        return await asyncio.to_thread(self.place_order, account_hash, order_spec)
+
+    async def async_replace_order(self, account_hash, order_id, order_spec):
+        '''Run replace_order in a worker thread without blocking the event loop.'''
+        return await asyncio.to_thread(self.replace_order, account_hash, order_id,
+                                       order_spec)
+
+    async def async_cancel_order(self, order_id, account_hash):
+        '''Run cancel_order in a worker thread without blocking the event loop.'''
+        return await asyncio.to_thread(self.cancel_order, order_id, account_hash)
+
     def _get_request(self, path, params):
+        self._warn_if_event_loop_running()
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('GET', dest, params)
@@ -75,6 +101,7 @@ class Client(BaseClient):
         return resp
 
     def _post_request(self, path, data):
+        self._warn_if_event_loop_running()
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('POST', dest, data)
@@ -84,6 +111,7 @@ class Client(BaseClient):
         return resp
 
     def _put_request(self, path, data):
+        self._warn_if_event_loop_running()
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('PUT', dest, data)
@@ -93,6 +121,7 @@ class Client(BaseClient):
         return resp
 
     def _delete_request(self, path):
+        self._warn_if_event_loop_running()
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('DELETE', dest)

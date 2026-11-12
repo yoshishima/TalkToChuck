@@ -239,6 +239,15 @@ run on whichever thread refreshed. Separate clients for the same token still do
 not coordinate; see :ref:`token_expiration` and the token-file notes in the
 authentication documentation.
 
+Synchronous API calls block a running asyncio event loop and emit a
+``RuntimeWarning`` when made on its thread. Prefer ``AsyncClient`` in async
+applications. When using an existing synchronous client, its
+``async_place_order()``, ``async_replace_order()``, and ``async_cancel_order()``
+methods run the corresponding operation in a worker thread; other calls can use
+``asyncio.to_thread``. The session and custom token callbacks must be safe to
+use from that thread. Canceling the awaiting task does not stop an operation
+already running in the worker; its order outcome may be unknown.
+
 
 +++++++++
 Token Age
