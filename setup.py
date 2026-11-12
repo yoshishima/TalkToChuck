@@ -38,7 +38,7 @@ setuptools.setup(
     # cancellation; 17.4 also fixes fragmented-message memory exhaustion.
     install_requires=[
         'autopep8>=2.3.2',
-        'authlib>=1.9.4',
+        'authlib>=1.9.5',
         'flask>=3.1.3',
         'httpx2>=2.16.0',
         'multiprocess>=0.70.19',
