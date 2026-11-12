@@ -862,10 +862,12 @@ class StreamClient(EnumEnforcer):
                     self._subscriptions[service][symbol] = (field_type, values)
                 if command == 'SUBS' and field_type is not None:
                     self._last_subscription_fields[service] = values
-            elif command == 'VIEW' and service in self._subscriptions:
+            elif command == 'VIEW' and field_type is not None:
+                values = tuple(fields)
                 for symbol in symbols:
-                    if symbol in self._subscriptions[service]:
-                        self._subscriptions[service][symbol] = (field_type, tuple(fields))
+                    if symbol in self._subscriptions.get(service, {}):
+                        self._subscriptions[service][symbol] = (field_type, values)
+                self._last_subscription_fields[service] = values
             elif command == 'UNSUBS' and service in self._subscriptions:
                 if service == 'ACCT_ACTIVITY':
                     self._subscriptions[service].clear()
@@ -1633,8 +1635,8 @@ class StreamClient(EnumEnforcer):
         :param symbols: Equity symbols to receive quotes for
         :param fields: Iterable of :class:`LevelOneEquityFields` representing
                        the fields to return. If unset, reuse the last
-                       acknowledged subscription fields, or request all fields
-                       if there is no prior subscription.
+                       acknowledged SUBS or VIEW fields, or request all fields
+                       if there is no prior SUBS or VIEW.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneEquityFields.SYMBOL)
@@ -1858,8 +1860,8 @@ class StreamClient(EnumEnforcer):
         :param symbols: Option symbols to add to list to receive quotes for
         :param fields: Iterable of :class:`LevelOneOptionFields` representing
                        the fields to return. If unset, reuse the last
-                       acknowledged subscription fields, or request all fields
-                       if there is no prior subscription.
+                       acknowledged SUBS or VIEW fields, or request all fields
+                       if there is no prior SUBS or VIEW.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneOptionFields.SYMBOL)
@@ -2036,8 +2038,8 @@ class StreamClient(EnumEnforcer):
         :param symbols: Futures symbols to add to the list to receive quotes for
         :param fields: Iterable of :class:`LevelOneFuturesFields` representing
                        the fields to return. If unset, reuse the last
-                       acknowledged subscription fields, or request all fields
-                       if there is no prior subscription.
+                       acknowledged SUBS or VIEW fields, or request all fields
+                       if there is no prior SUBS or VIEW.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneFuturesFields.SYMBOL)
@@ -2181,8 +2183,8 @@ class StreamClient(EnumEnforcer):
         :param symbols: Forex symbols to add to list to receive quotes for
         :param fields: Iterable of :class:`LevelOneForexFields` representing
                        the fields to return. If unset, reuse the last
-                       acknowledged subscription fields, or request all fields
-                       if there is no prior subscription.
+                       acknowledged SUBS or VIEW fields, or request all fields
+                       if there is no prior SUBS or VIEW.
 
         '''
         fields = self._with_required_field(
@@ -2333,8 +2335,8 @@ class StreamClient(EnumEnforcer):
         :param symbols: Futures options symbols add to list to receive quotes for
         :param fields: Iterable of :class:`LevelOneFuturesOptionsFields`
                        representing the fields to return in streaming entries.
-                       If unset, reuse the last acknowledged subscription fields,
-                       or request all fields if there is no prior subscription.
+                       If unset, reuse the last acknowledged SUBS or VIEW fields,
+                       or request all fields if there is no prior SUBS or VIEW.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneFuturesOptionsFields.SYMBOL)

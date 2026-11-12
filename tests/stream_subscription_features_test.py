@@ -6,6 +6,61 @@ from schwab.streaming import StreamClient
 
 
 class SubscriptionFieldTests(unittest.IsolatedAsyncioTestCase):
+    async def test_add_reuses_last_acknowledged_view_fields(self):
+        client = StreamClient(Mock())
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        fields = client.LevelOneEquityFields
+        await client.level_one_equity_subs(['AAPL'], fields=[fields.BID_PRICE])
+        await client.view('LEVELONE_EQUITIES', ['AAPL'], fields=[
+            fields.BID_PRICE, fields.ASK_PRICE, fields.LAST_PRICE])
+        await client.level_one_equity_add(['MSFT'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'],
+                         '0,1,2,3')
+
+    async def test_failed_view_does_not_replace_add_fields(self):
+        client = StreamClient(Mock())
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        fields = client.LevelOneEquityFields
+        await client.level_one_equity_subs(['AAPL'], fields=[fields.BID_PRICE])
+        send.side_effect = [RuntimeError('failed'), None]
+        with self.assertRaises(RuntimeError):
+            await client.view('LEVELONE_EQUITIES', ['AAPL'],
+                              fields=[fields.ASK_PRICE])
+        await client.level_one_equity_add(['MSFT'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,1')
+
+    async def test_view_fields_are_per_service_and_later_subs_replaces_them(self):
+        client = StreamClient(Mock())
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        equity = client.LevelOneEquityFields
+        option = client.LevelOneOptionFields
+        await client.level_one_equity_subs(['A'], fields=[equity.BID_PRICE])
+        await client.level_one_option_subs(['OPT'], fields=[option.BID_PRICE])
+        await client.view('LEVELONE_EQUITIES', ['A'], fields=[equity.ASK_PRICE])
+        await client.level_one_option_add(['OTHER'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,2')
+        await client.level_one_equity_subs(['A'], fields=[equity.LAST_PRICE])
+        await client.level_one_equity_add(['B'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,3')
+
+    async def test_partial_view_records_fields_from_acknowledged_chunk(self):
+        client = StreamClient(Mock(), max_symbols_per_request=1)
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        fields = client.LevelOneEquityFields
+        await client.level_one_equity_subs(['A', 'B'], fields=[fields.BID_PRICE])
+        send.side_effect = [None, RuntimeError('failed'), None]
+        with self.assertRaises(RuntimeError):
+            await client.view('LEVELONE_EQUITIES', ['A', 'B'],
+                              fields=[fields.ASK_PRICE])
+        await client.level_one_equity_add(['C'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,2')
+        self.assertEqual(client._subscriptions['LEVELONE_EQUITIES']['A'][1], (0, 2))
+        self.assertEqual(client._subscriptions['LEVELONE_EQUITIES']['B'][1], (0, 1))
+
     async def test_add_reuses_successful_subscription_fields_per_service(self):
         client = StreamClient(Mock())
         client._socket = object()

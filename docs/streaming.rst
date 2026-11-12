@@ -135,10 +135,12 @@ These functions send a request to add to the list of subscribed symbols for a
 particular data stream.
 
 For level-one services, omitting ``fields`` reuses the fields from the last
-acknowledged ``SUBS`` for that service. If there is no such subscription, all
-fields are requested. Pass ``fields`` explicitly to select a different set.
+acknowledged ``SUBS`` or ``VIEW`` for that service. If there is no such request,
+all fields are requested. Pass ``fields`` explicitly to select a different set.
 Schwab's treatment of different field sets for the same service is not verified
-here; use consistent fields if your application depends on uniform updates.
+here; a ``VIEW`` of only some symbols still sets the default for later ``ADD``
+requests on that service. Use consistent fields if your application depends on
+uniform updates.
 
 Symbol lists must be nonempty. Duplicate symbols are removed, and large lists
 are split into requests of at most 500 symbols by default. Set the positive
