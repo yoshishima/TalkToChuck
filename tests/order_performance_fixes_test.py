@@ -177,30 +177,58 @@ class OrderRequestPolicyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_order_attempts_are_spaced(self):
         import asyncio
-        import time
         import httpx2
+        from types import SimpleNamespace
         from unittest.mock import AsyncMock
         from schwab.client import Client, AsyncClient
+        import schwab.client.asynchronous as async_module
+        import schwab.client.synchronous as sync_module
+
+        class Clock:
+            def __init__(self):
+                self.now = 0.0
+                self.delays = []
+
+            def perf_counter(self):
+                return self.now
+
+            def sleep(self, delay):
+                self.delays.append(delay)
+                # Simulate an early wake on the first sleep. The throttle must
+                # check the clock again instead of assuming the full delay.
+                self.now += delay / 2 if len(self.delays) == 1 else delay
+
         for asynchronous in (False, True):
             with self.subTest(asynchronous=asynchronous):
-                times = []
+                clock = Clock()
                 session = Mock()
-                def record(*args, **kwargs):
-                    times.append(time.monotonic())
-                    return httpx2.Response(201)
+                response = httpx2.Response(201)
                 if asynchronous:
-                    async def async_record(*args, **kwargs):
-                        return record(*args, **kwargs)
-                    session.post = AsyncMock(side_effect=async_record)
+                    session.post = AsyncMock(return_value=response)
                 else:
-                    session.post.side_effect = record
+                    session.post.return_value = response
                 client = (AsyncClient if asynchronous else Client)('key', session)
                 client.configure_order_requests(min_interval=0.04)
-                tasks = [client.place_order('a', {}) if asynchronous
-                         else client.async_place_order('a', {}) for _ in range(3)]
-                await asyncio.gather(*tasks)
-                self.assertEqual(len(times), 3)
-                self.assertTrue(all(b - a >= 0.035 for a, b in zip(times, times[1:])), times)
+                module = async_module if asynchronous else sync_module
+
+                async def async_sleep(delay):
+                    clock.sleep(delay)
+                    await asyncio.sleep(0)
+
+                async_proxy = SimpleNamespace(sleep=async_sleep)
+                from contextlib import nullcontext
+                async_patch = (patch.object(module, 'asyncio', async_proxy)
+                               if asynchronous else nullcontext())
+                with patch.object(module, 'time', clock), async_patch:
+                    tasks = [client.place_order('a', {}) if asynchronous
+                             else client.async_place_order('a', {}) for _ in range(3)]
+                    await asyncio.gather(*tasks)
+                self.assertEqual(session.post.call_count, 3)
+                self.assertEqual(len(clock.delays), 3)
+                self.assertAlmostEqual(clock.delays[0], 0.04)
+                self.assertAlmostEqual(clock.delays[1], 0.02)
+                self.assertAlmostEqual(clock.delays[2], 0.04)
+                self.assertAlmostEqual(client._last_order_request, 0.08)
 
 class RecentOrderPollingTests(unittest.IsolatedAsyncioTestCase):
     async def test_recent_query_bounds_window_for_sync_and_async(self):

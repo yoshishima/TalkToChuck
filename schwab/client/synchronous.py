@@ -79,12 +79,14 @@ class Client(BaseClient):
         if not self._is_order_mutation(path) or not self._order_min_interval:
             return
         with self._order_throttle_lock:
-            now = time.monotonic()
             if self._last_order_request is not None:
-                delay = self._last_order_request + self._order_min_interval - now
-                if delay > 0:
+                while True:
+                    delay = (self._last_order_request + self._order_min_interval
+                             - time.perf_counter())
+                    if delay <= 0:
+                        break
                     time.sleep(delay)
-            self._last_order_request = time.monotonic()
+            self._last_order_request = time.perf_counter()
 
     def _get_request(self, path, params):
         self._warn_if_event_loop_running()
