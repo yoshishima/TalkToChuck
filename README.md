@@ -10,6 +10,9 @@ This project builds on [the original schwab-py](https://github.com/alexgolec/sch
 Thank you to **Alex Golec** for creating the library and sharing the work that
 made this fork possible.
 
+Current version: **v1.7.6**. See the [changelog](CHANGELOG.md) for release
+notes.
+
 ## Features
 
 - OAuth authentication, token storage, and refresh
