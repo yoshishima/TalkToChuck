@@ -5,7 +5,55 @@ import httpx2
 
 class AsyncClient(BaseClient):
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._refresh_stop = None
+        self._refresh_task = None
+
+    def start_token_refresh(self):
+        '''Start an optional background refresh task on the current loop.'''
+        if self._refresh_task is not None and not self._refresh_task.done():
+            return
+        self._refresh_stop = asyncio.Event()
+        self._refresh_task = asyncio.create_task(AsyncClient._refresh_loop(self))
+
+    async def _refresh_loop(self):
+        while not self._refresh_stop.is_set():
+            try:
+                await asyncio.wait_for(self._refresh_stop.wait(),
+                                       timeout=self._background_refresh_delay())
+                return
+            except TimeoutError:
+                pass
+            try:
+                await self.session.ensure_active_token(self.session.token)
+            except Exception as exc:
+                self.logger.warning('Background token refresh failed (%s)',
+                                    type(exc).__name__)
+                try:
+                    await asyncio.wait_for(self._refresh_stop.wait(), timeout=30.0)
+                    return
+                except TimeoutError:
+                    pass
+            else:
+                if self._background_refresh_delay() == 0:
+                    try:
+                        await asyncio.wait_for(self._refresh_stop.wait(), timeout=30.0)
+                        return
+                    except TimeoutError:
+                        pass
+
+    async def stop_token_refresh(self):
+        '''Stop the worker after any in-flight refresh finishes.'''
+        task = self._refresh_task
+        if task is None:
+            return
+        self._refresh_stop.set()
+        if task is not asyncio.current_task():
+            await asyncio.shield(task)
+
     async def close_async_session(self):
+        await AsyncClient.stop_token_refresh(self)
         await self.session.aclose()
 
     async def _get_request(self, path, params):

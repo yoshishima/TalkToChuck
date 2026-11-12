@@ -203,6 +203,17 @@ in the pool does not guarantee that the next request can reuse it.
 .. automethod:: schwab.client.Client.close_session
 .. automethod:: schwab.client.AsyncClient.close_async_session
 
+To refresh an expiring token before a request needs it, call
+``client.start_token_refresh()`` after creating either client. The synchronous
+client starts a daemon thread; the async client starts a task on the current
+event loop. Refresh and token persistence use the same synchronization as
+ordinary requests. Close the client to stop the worker, or call
+``stop_token_refresh()`` (await it for the async client). Stopping waits for an
+in-flight refresh so token persistence can finish. Failures are logged and
+retried later; requests can still wait for a refresh or fail if it cannot be
+completed. Custom token writers must be safe on the worker thread for a sync
+client and should avoid blocking the event loop for an async client.
+
 
 +++++++++++++
 Thread Safety

@@ -13,6 +13,7 @@ import random
 import warnings
 import re
 import threading
+import time
 import schwab
 from urllib.parse import quote
 
@@ -302,6 +303,16 @@ class BaseClient(EnumEnforcer, ABC):
         implementation, and the token might become expired sooner *or* later 
         than the documented seven day term.'''
         return self.token_metadata.token_age()
+
+    def _background_refresh_delay(self):
+        '''Seconds until Authlib's refresh window, or a periodic recheck.'''
+        token = getattr(self.session, 'token', None)
+        expiry = token.get('expires_at') if isinstance(token, dict) else None
+        leeway = getattr(self.session, 'leeway', 300)
+        if (type(expiry) not in (int, float) or not math.isfinite(expiry)
+                or type(leeway) not in (int, float) or not math.isfinite(leeway)):
+            return 60.0
+        return max(0.0, expiry - leeway - time.time() + 0.1)
 
 
     ##########################################################################
