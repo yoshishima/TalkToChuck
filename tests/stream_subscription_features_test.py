@@ -155,3 +155,32 @@ class CooperativeDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0]['content'][299]['BID_PRICE'], 299)
         self.assertIn('1', message['content'][0])
+
+class ProtocolFeatureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_view_updates_restored_fields(self):
+        client = StreamClient(Mock())
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        f = client.LevelOneEquityFields
+        await client.level_one_equity_subs(['A'], fields=[f.BID_PRICE])
+        await client.view('LEVELONE_EQUITIES', ['A'], fields=[f.ASK_PRICE])
+        self.assertEqual(send.await_args.args[0]['command'], 'VIEW')
+        send.reset_mock()
+        await client.resubscribe()
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,2')
+
+    async def test_batch_routes_all_out_of_order_responses_and_preserves_data(self):
+        import json
+        client = StreamClient(Mock())
+        socket = client._socket = AsyncMock()
+        socket.recv.return_value = json.dumps({
+            'response': [
+                {'requestid': '1', 'service': 'B', 'command': 'Y', 'content': {'code': 0}},
+                {'requestid': '0', 'service': 'A', 'command': 'X', 'content': {'code': 0}},
+            ], 'data': [{'service': 'UNKNOWN', 'content': []}]})
+        result = await client.send_requests([
+            {'service': 'A', 'command': 'X', 'parameters': {}},
+            {'service': 'B', 'command': 'Y', 'parameters': {}}])
+        self.assertEqual([r['response'][0]['requestid'] for r in result], ['0', '1'])
+        self.assertEqual(len(json.loads(socket.send.await_args.args[0])['requests']), 2)
+        self.assertEqual(client._overflow_items[0]['data'][0]['service'], 'UNKNOWN')

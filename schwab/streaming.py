@@ -429,16 +429,18 @@ class StreamClient(EnumEnforcer):
         if (not isinstance(responses, list) or not responses
                 or not isinstance(responses[0], dict)):
             return 'Response must be a nonempty list of objects'
-        response = responses[0]
-        try:
-            int(response['requestid'])
-        except (KeyError, ValueError, TypeError, OverflowError):
-            return 'Response request ID is missing or invalid'
-        content = response.get('content')
-        if ('service' not in response or 'command' not in response
-                or not isinstance(content, dict) or 'code' not in content
-                or (content['code'] != 0 and 'msg' not in content)):
-            return 'Response fields are missing or invalid'
+        for response in responses:
+            if not isinstance(response, dict):
+                return 'Response must be a list of objects'
+            try:
+                int(response['requestid'])
+            except (KeyError, ValueError, TypeError, OverflowError):
+                return 'Response request ID is missing or invalid'
+            content = response.get('content')
+            if ('service' not in response or 'command' not in response
+                    or not isinstance(content, dict) or 'code' not in content
+                    or (content['code'] != 0 and 'msg' not in content)):
+                return 'Response fields are missing or invalid'
         return None
 
     async def _init_from_preferences(self, prefs, websocket_connect_args):
@@ -627,35 +629,39 @@ class StreamClient(EnumEnforcer):
                         continue
 
                     if 'response' in msg:
-                        response_request_id = int(
-                                msg['response'][0]['requestid'])
-                        waiter = self._response_waiters.pop(
-                                response_request_id, None)
+                        for response in msg['response']:
+                            response_msg = {'response': [response]}
+                            response_request_id = int(response['requestid'])
+                            waiter = self._response_waiters.pop(
+                                    response_request_id, None)
 
-                        if waiter is not None and not waiter.done():
-                            waiter.set_result(msg)
-                        elif response_request_id < self._request_id:
-                            # This request was issued, but its waiter has
-                            # already completed, timed out, or been cancelled.
-                            # A late acknowledgement must not be mistaken for
-                            # a stream message or a response to a newer request.
-                            self.logger.warning(
-                                    'Ignoring late response for request %s: '
-                                    '%s',
-                                    response_request_id,
-                                    LazyLog(lambda msg=msg: redact_json(msg, stream=True)))
-                        # Preserve the historical behavior for malformed or
-                        # future response IDs: the sole request waiter receives
-                        # the response and raises UnexpectedResponse during
-                        # validation.
-                        elif len(self._response_waiters) == 1:
-                            _, waiter = self._response_waiters.popitem()
-                            if not waiter.done():
-                                waiter.set_result(msg)
-                        else:
-                            self._buffer_message(msg)
-                    else:
+                            if waiter is not None and not waiter.done():
+                                waiter.set_result(response_msg)
+                            elif response_request_id < self._request_id:
+                                # This request was issued, but its waiter has
+                                # already completed, timed out, or been cancelled.
+                                # A late acknowledgement must not be mistaken for
+                                # a stream message or a response to a newer request.
+                                self.logger.warning(
+                                        'Ignoring late response for request %s: '
+                                        '%s',
+                                        response_request_id,
+                                        LazyLog(lambda msg=response_msg: redact_json(msg, stream=True)))
+                            # Preserve the historical behavior for malformed or
+                            # future response IDs: the sole request waiter receives
+                            # the response and raises UnexpectedResponse during
+                            # validation.
+                            elif len(self._response_waiters) == 1:
+                                _, waiter = self._response_waiters.popitem()
+                                if not waiter.done():
+                                    waiter.set_result(response_msg)
+                            else:
+                                self._buffer_message(response_msg)
+                    if 'response' not in msg:
                         self._buffer_message(msg)
+                    elif 'data' in msg or 'notify' in msg:
+                        self._buffer_message({key: value for key, value in msg.items()
+                                              if key != 'response'})
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -717,6 +723,55 @@ class StreamClient(EnumEnforcer):
             self._response_waiters.pop(request_id, None)
 
         self._validate_response(resp, request_id, service, command)
+
+    async def send_requests(self, requests):
+        '''Send raw service requests in one message and await all responses.
+
+        Each item is a mapping with service, command and parameters keys.
+        These low-level requests do not update the subscription registry.
+        '''
+        requests = list(requests)
+        if not requests:
+            raise ValueError('requests must not be empty')
+        for item in requests:
+            if (not isinstance(item, dict)
+                    or not isinstance(item.get('service'), str)
+                    or not isinstance(item.get('command'), str)
+                    or not isinstance(item.get('parameters'), dict)):
+                raise ValueError('each request needs service, command and parameters')
+        loop = asyncio.get_running_loop()
+        pending = []
+        for item in requests:
+            request, request_id = self._make_request(
+                service=item['service'], command=item['command'],
+                parameters=item['parameters'])
+            waiter = loop.create_future()
+            self._response_waiters[request_id] = waiter
+            pending.append((request, request_id, waiter))
+        try:
+            async with self._send_lock:
+                await self._send({'requests': [item[0] for item in pending]})
+            self._ensure_reader()
+            waiting = asyncio.gather(*(item[2] for item in pending),
+                                     return_exceptions=True)
+            if self._response_timeout is None:
+                results = await waiting
+            else:
+                results = await asyncio.wait_for(waiting, self._response_timeout)
+            for (request, request_id, _), result in zip(pending, results):
+                if isinstance(result, BaseException):
+                    raise result
+                self._validate_response(result, request_id, request['service'],
+                                        request['command'])
+            return results
+        finally:
+            for _, request_id, waiter in pending:
+                self._response_waiters.pop(request_id, None)
+                if not waiter.done():
+                    waiter.cancel()
+                elif not waiter.cancelled():
+                    waiter.exception()
+            await self._stop_reader_if_idle()
 
     async def _service_op(self, symbols, service, command, field_type=None,
                           *, fields=None):
@@ -804,6 +859,10 @@ class StreamClient(EnumEnforcer):
                     self._subscriptions[service][symbol] = (field_type, values)
                 if command == 'SUBS' and field_type is not None:
                     self._last_subscription_fields[service] = values
+            elif command == 'VIEW' and service in self._subscriptions:
+                for symbol in symbols:
+                    if symbol in self._subscriptions[service]:
+                        self._subscriptions[service][symbol] = (field_type, tuple(fields))
             elif command == 'UNSUBS' and service in self._subscriptions:
                 if service == 'ACCT_ACTIVITY':
                     self._subscriptions[service].clear()
@@ -832,6 +891,23 @@ class StreamClient(EnumEnforcer):
                     await self._service_chunks_locked(
                         symbols, service, 'SUBS' if index == 0 else 'ADD',
                         field_type, fields=fields, converted=True, record=False)
+
+    async def view(self, service, symbols, *, fields):
+        '''Change fields for symbols on a level-one service.'''
+        field_types = {
+            'LEVELONE_EQUITIES': self.LevelOneEquityFields,
+            'LEVELONE_OPTIONS': self.LevelOneOptionFields,
+            'LEVELONE_FUTURES': self.LevelOneFuturesFields,
+            'LEVELONE_FOREX': self.LevelOneForexFields,
+            'LEVELONE_FUTURES_OPTIONS': self.LevelOneFuturesOptionsFields,
+        }
+        if service not in field_types:
+            raise ValueError('unsupported service for VIEW')
+        field_type = field_types[service]
+        if fields is None:
+            raise ValueError('fields must be specified for VIEW')
+        fields = self._with_required_field(fields, field_type.SYMBOL)
+        await self._service_op(symbols, service, 'VIEW', field_type, fields=fields)
 
     @staticmethod
     def _with_required_field(fields, required_field):
