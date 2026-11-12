@@ -136,3 +136,22 @@ class DisconnectTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client._socket)
         socket.close.assert_awaited_once()
 
+
+class CooperativeDispatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_large_content_yields_and_preserves_single_dispatch(self):
+        from schwab.streaming import _Handler, _PendingMessage
+        client = StreamClient(Mock())
+        seen = []
+        client.add_level_one_equity_handler(seen.append)
+        message = {'service': 'LEVELONE_EQUITIES', 'content': [{'1': index} for index in range(300)]}
+        state = _PendingMessage({'data': [message]})
+        ticks = []
+        async def observer():
+            ticks.append(len(seen))
+        task = asyncio.create_task(client._dispatch_handlers('LEVELONE_EQUITIES', message, dispatch_state=state, label_message=True))
+        observer_task = asyncio.create_task(observer())
+        await asyncio.gather(task, observer_task)
+        self.assertEqual(ticks, [0])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]['content'][299]['BID_PRICE'], 299)
+        self.assertIn('1', message['content'][0])

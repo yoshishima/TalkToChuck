@@ -173,6 +173,36 @@ class _Handler:
                                                   new_msg['content'][idx])
         return new_msg
 
+    async def label_message_cooperatively(self, msg):
+        # Specialized handlers may perform additional relabeling after the
+        # base implementation; retain their existing behavior.
+        if (type(self) is not _Handler or type(msg) is not dict
+                or type(msg.get('content')) is not list
+                or len(msg['content']) < 128):
+            return self.label_message(msg)
+        try:
+            new_msg = {}
+            for key, value in msg.items():
+                if key == 'content':
+                    content = []
+                    for index, entry in enumerate(value):
+                        if index and index % 128 == 0:
+                            await asyncio.sleep(0)
+                        if type(entry) is dict:
+                            content.append(self._field_enum_type.relabeled_copy(entry))
+                        else:
+                            entry_copy = _json_clone(entry)
+                            self._field_enum_type.relabel_message(entry, entry_copy)
+                            content.append(entry_copy)
+                    new_msg[key] = content
+                elif type(value) in _JSON_ATOMIC_TYPES:
+                    new_msg[key] = value
+                else:
+                    new_msg[key] = _json_clone(value)
+            return new_msg
+        except RecursionError:
+            return self.label_message(msg)
+
     def _relabeled_json_copy(self, msg):
         # Copy and relabel in one pass instead of deep-copying first.
         field_enum = self._field_enum_type
@@ -881,9 +911,13 @@ class StreamClient(EnumEnforcer):
         owns_message = False
         if label_message and handlers:
             try:
-                labeled = handlers[0].label_message(message)
+                labeled = await handlers[0].label_message_cooperatively(message)
+                if generation != self._connection_generation:
+                    raise StreamClosedError('Stream connection replaced')
                 owns_message = labeled is not message
                 message = labeled
+            except StreamClosedError:
+                raise
             except Exception as exception:
                 self._log_handler_exception(
                         'Stream message relabeling failed', exception)
@@ -997,6 +1031,8 @@ class StreamClient(EnumEnforcer):
                 msg.next_event += 1
                 msg.next_handler = 0
                 msg.handlers = None
+                if msg.next_event % 128 == 0 and msg.next_event < len(msg.events):
+                    await asyncio.sleep(0)
         except asyncio.CancelledError:
             # Capacity waits may interrupt a partly dispatched message. Resume
             # at the next uncalled handler instead of dropping it or repeating
