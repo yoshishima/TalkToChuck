@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, Mock
 
@@ -106,3 +107,32 @@ class StreamLoggingTests(unittest.IsolatedAsyncioTestCase):
         redact.assert_not_called()
         self.assertIn('1 data entries', logs.output[0])
         self.assertNotIn('private', logs.output[0])
+
+class DisconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recv_disconnect_closes_socket_and_normalizes_error(self):
+        from websockets.exceptions import ConnectionClosed
+        from schwab.streaming import StreamClosedError
+        client = StreamClient(Mock())
+        socket = client._socket = AsyncMock()
+        socket.recv.side_effect = ConnectionClosed(None, None)
+        with self.assertRaises(StreamClosedError) as error:
+            await client.handle_message()
+        self.assertIsInstance(error.exception.__cause__, ConnectionClosed)
+        await asyncio.sleep(0)
+        self.assertIsNone(client._socket)
+        socket.close.assert_awaited_once()
+        with self.assertRaises(StreamClosedError):
+            await client.level_one_equity_subs(['A'])
+
+    async def test_send_disconnect_normalizes_error(self):
+        from websockets.exceptions import ConnectionClosed
+        from schwab.streaming import StreamClosedError
+        client = StreamClient(Mock())
+        socket = client._socket = AsyncMock()
+        socket.send.side_effect = ConnectionClosed(None, None)
+        with self.assertRaises(StreamClosedError) as error:
+            await client.level_one_equity_subs(['A'])
+        self.assertIsInstance(error.exception.__cause__, ConnectionClosed)
+        self.assertIsNone(client._socket)
+        socket.close.assert_awaited_once()
+

@@ -11,6 +11,7 @@ import math
 import warnings
 
 from websockets.asyncio import client as ws_client
+from websockets.exceptions import ConnectionClosed
 
 from .utils import EnumEnforcer, LazyLog
 from .debug import get_redacted_logger, get_websocket_logger, redact_json
@@ -276,6 +277,7 @@ class StreamClient(EnumEnforcer):
         self._stream_channel = None
         self._stream_function_id = None
         self._socket = None
+        self._connection_lost = False
 
         # Internal fields
         self._request_id = 0
@@ -331,18 +333,29 @@ class StreamClient(EnumEnforcer):
 
     async def _send(self, obj):
         if self._socket is None:
+            if self._connection_lost:
+                raise StreamClosedError('Stream connection lost')
             raise ValueError(
                 'Socket not open. Did you forget to call login()?')
 
         self.logger.debug('Send %s: Sending %s',
                 self.req_num(), LazyLog(lambda: redact_json(obj, stream=True)))
 
-        await self._socket.send(json.dumps(obj))
+        socket = self._socket
+        try:
+            await socket.send(json.dumps(obj))
+        except ConnectionClosed as exc:
+            if self._socket is socket:
+                self._connection_lost = True
+                await self._close_connection()
+            raise StreamClosedError('Stream connection lost') from exc
 
     async def _receive(self):
         '''Read and decode one frame from the socket. Buffered messages are
         delivered by the reader loop, not here.'''
         if self._socket is None:
+            if self._connection_lost:
+                raise StreamClosedError('Stream connection lost')
             raise ValueError(
                 'Socket not open. Did you forget to call login()?')
 
@@ -420,6 +433,7 @@ class StreamClient(EnumEnforcer):
 
         self._socket = await ws_client.connect(
                 wss_url, **websocket_connect_args)
+        self._connection_lost = False
 
 
     def _make_request(self, *, service, command, parameters):
@@ -615,25 +629,34 @@ class StreamClient(EnumEnforcer):
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
+            if isinstance(exc, ConnectionClosed):
+                self._connection_lost = True
+                failure = StreamClosedError('Stream connection lost')
+                failure.__cause__ = exc
+            else:
+                failure = exc
             delivered = False
             for waiter in self._response_waiters.values():
                 if not waiter.done():
-                    waiter.set_exception(exc)
+                    waiter.set_exception(failure)
                     delivered = True
             for waiter in self._message_waiters:
                 if not waiter.done():
-                    waiter.set_exception(exc)
+                    waiter.set_exception(failure)
                     delivered = True
             self._response_waiters.clear()
             self._message_waiters.clear()
-            if isinstance(exc, StreamBufferOverflowError):
+            if isinstance(exc, ConnectionClosed):
+                await self._close_connection()
+            elif isinstance(exc, StreamBufferOverflowError):
                 self.logger.error('Closing stream: pending message buffer is full')
                 await self._close_connection()
             elif not delivered:
                 self.logger.exception('Stream reader failed without an active waiter')
         finally:
-            self._reader_wakeup.clear()
-            self._reader_task = None
+            if self._reader_task is asyncio.current_task():
+                self._reader_wakeup.clear()
+                self._reader_task = None
 
     async def _send_request_and_await_response(
             self, request, request_id, service, command, *,
@@ -656,6 +679,8 @@ class StreamClient(EnumEnforcer):
                         waiter, timeout=self._response_timeout)
         except BaseException:
             self._response_waiters.pop(request_id, None)
+            if waiter.done() and not waiter.cancelled():
+                waiter.exception()
             await self._stop_reader_if_idle()
             raise
         else:
@@ -672,6 +697,8 @@ class StreamClient(EnumEnforcer):
     async def _service_chunks_locked(self, symbols, service, command, field_type,
                                      *, fields=None, converted=False, record=True):
         if self._socket is None:
+            if self._connection_lost:
+                raise StreamClosedError('Stream connection lost')
             raise ValueError('Socket not open. Did you forget to call login()?')
         if isinstance(symbols, str):
             symbols = [symbols]
