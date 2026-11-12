@@ -369,6 +369,21 @@ instead of creating your own order specs.
 
 .. automethod:: schwab.client.Client.place_order
 
+If order submission times out or the connection fails after transmission, the
+order's state is unknown: Schwab may have accepted it even though no response
+was received. A timeout during an OAuth refresh can instead occur before the
+order is sent; inspect the exception's request when available. Do not submit
+the order again solely because a response is missing. Check the account's recent
+orders over a suitable time window, comparing the account, instrument, side,
+quantity, price, and submission time. If the result is ambiguous, confirm the
+order status with Schwab before taking further action. An order may fill or
+otherwise change state while it is being investigated.
+
+The same uncertainty can arise for replacements, cancellations, task
+cancellation after a request starts, and some server errors. A replacement may
+have canceled the original order and created a new one; inspect both. These
+requests are never automatically retried by the client.
+
 .. _accessing_existing_orders:
 
 -------------------------

@@ -531,7 +531,8 @@ class BaseClient(EnumEnforcer, ABC):
         :meth:`schwab.utils.Utils.extract_order_id` for more details. Note unlike
         most methods in this library, responses for successful calls to this
         method typically do not contain ``json()`` data, and attempting to
-        extract it will likely result in an exception.'''
+        extract it will likely result in an exception. A timeout after sending
+        leaves order state unknown; check recent orders before submitting again.'''
         if isinstance(order_spec, OrderBuilder):
             order_spec = order_spec.build()
 
@@ -542,7 +543,8 @@ class BaseClient(EnumEnforcer, ABC):
     def replace_order(self, account_hash, order_id, order_spec):
         '''Replace an existing order for an account. The existing order will be
         replaced by the new order. Once replaced, the old order will be canceled
-        and a new order will be created.'''
+        and a new order will be created. A timeout after sending leaves the
+        outcome unknown; check both orders before taking further action.'''
         if isinstance(order_spec, OrderBuilder):
             order_spec = order_spec.build()
 
