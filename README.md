@@ -1,174 +1,115 @@
-# `schwab-py`: A Charles Schwab API wrapper
+# schwab-py
 
-[![Tests](https://github.com/yoshishima/schwab-py/actions/workflows/python.yml/badge.svg)](https://github.com/yoshishima/schwab-py/actions/workflows/python.yml)
+An unofficial Python wrapper for the Charles Schwab Trader and Market Data
+APIs. Use it to authenticate, retrieve account and market data, build and manage
+orders, and subscribe to streaming data.
 
-This is a maintained fork of [alexgolec's original `schwab-py`](https://github.com/alexgolec/schwab-py),
-created after the upstream project went a year without updates. Thank you to
-Alex Golec (`alexgolec`) for creating `schwab-py` and building the foundation
-this fork continues to develop.
+[![Tests](https://github.com/yoshishima/TalkToChuck/actions/workflows/python.yml/badge.svg)](https://github.com/yoshishima/TalkToChuck/actions/workflows/python.yml)
 
-## What is `schwab-py`?
+This project builds on [the original schwab-py](https://github.com/alexgolec/schwab-py).
+Thank you to **Alex Golec** for creating the library and sharing the work that
+made this fork possible.
 
-`schwab-py` is an unofficial wrapper around the Charles Schwab Trader and
-Market Data APIs. It provides a thin Python interface over the HTTP and
-streaming endpoints while returning the original response data for callers to
-interpret.
+## Features
 
-Notable functionality includes:
-
-- OAuth login, token storage, and token refresh
-- Account details, balances, positions, transactions, and order history
-- Order placement, replacement, cancellation, templates, and code generation
-- Quotes, fundamentals, instruments, movers, market hours, and price history
-- Option chains and option expiration chains
+- OAuth authentication, token storage, and refresh
+- Account balances, positions, transactions, and order history
+- Order placement, replacement, cancellation, and order-building utilities
+- Quotes, price history, fundamentals, instruments, movers, and market hours
+- Option chains and expiration dates
 - Streaming quotes, charts, account activity, and order book data
+- Synchronous and asynchronous clients
+
+The client returns HTTP responses so you can inspect status codes and work
+directly with Schwab's response data.
 
 ## Requirements
 
-`schwab-py` requires Python 3.12 or newer. The test matrix covers Python 3.12,
-3.13, and 3.14, with current development focused on Python 3.14 compatibility.
+- Python 3.12 or newer. CI tests Python 3.12, 3.13, and 3.14 on Windows,
+  macOS, and Linux.
+- A [Schwab developer account](https://developer.schwab.com/) and an approved
+  application with an app key, app secret, and callback URL.
 
-## Improvements in this fork
-
-The current fork is version v1.7.6. Changes since the original project include:
-
-- More reliable OAuth login and callback server startup, with clearer errors
-  when the callback server times out or another process owns its port.
-- Safer token file updates, including atomic replacement, restrictive file
-  permissions, and correct handling of token paths that are symlinks.
-- More robust streaming message delivery and handler dispatch, including
-  improved reader lifecycle handling and malformed message handling.
-- More precise order and option price calculations using `Decimal`, plus
-  clearer validation of numeric inputs and order builder state.
-- Corrected price history and order history query defaults, with validation
-  for optional boolean query parameters.
-- Updated dependencies and automated tests for Python 3.12, 3.13, and 3.14
-  on Windows, macOS, and Linux.
+Application approval can take several days. See the
+[getting-started guide](docs/getting-started.rst) for details. Its installation
+instructions describe the upstream PyPI package; use the command below for this
+fork.
 
 ## Installation
 
 ```console
-python -m pip install git+https://github.com/yoshishima/schwab-py.git
+python -m pip install git+https://github.com/yoshishima/TalkToChuck.git
 ```
 
-This command installs the current fork from GitHub. The `schwab-py` package on
-PyPI and the Read the Docs site are maintained separately from this fork and
-may describe a different version.
-
-Before using the library, create an account and application on the
-[Charles Schwab developer site](https://developer.schwab.com/login). Record the
-API key, app secret, and callback URL. The application must be approved by
-Schwab before it can access the APIs, which can take several days.
-
-See this repository's [getting-started guide](docs/getting-started.rst)
-for detailed setup instructions.
+This installs the current version from this repository. The package published
+on PyPI and the upstream documentation may describe a different version.
 
 ## Quick start
 
-The following example authenticates and requests available daily price history
-for Apple:
+Register a callback URL with your Schwab application and use the exact same
+value below, including any trailing slash. Set `SCHWAB_API_KEY` and
+`SCHWAB_APP_SECRET` in your environment before running the example.
 
 ```python
 import json
+import os
 
 from schwab import auth
 
-api_key = 'YOUR_API_KEY'
-app_secret = 'YOUR_APP_SECRET'
-callback_url = 'https://127.0.0.1:8182/'
-token_path = '/path/to/token.json'
-
 client = auth.easy_client(
-    api_key,
-    app_secret,
-    callback_url,
-    token_path,
+    api_key=os.environ['SCHWAB_API_KEY'],
+    app_secret=os.environ['SCHWAB_APP_SECRET'],
+    callback_url='https://127.0.0.1:8182',
+    token_path='token.json',
 )
 
 response = client.get_price_history_every_day('AAPL')
 response.raise_for_status()
-print(json.dumps(response.json(), indent=4))
+print(json.dumps(response.json(), indent=2))
 ```
 
-Never commit or share API secrets or token files.
+On first use, follow the login prompts to create a token. Later runs can reuse
+the token file, and the client updates it when tokens are refreshed. Keep your
+app secret and token file private; do not commit them to version control. See
+the [authentication guide](docs/auth.rst) for other login options.
 
-## Important API behavior
+## API notes
 
-### Price history
+- **Price history:** `get_price_history_every_*` methods use a date range. If
+  omitted, the start defaults to January 1, 1971 UTC and the end defaults to
+  the current time. Schwab may limit the history returned for a given candle
+  frequency.
+- **Order history:** With no date bounds, `get_orders_for_account` requests
+  the preceding 365 days, while `get_orders_for_all_linked_accounts` requests
+  the preceding 60 days. Both default the end time to the current time.
+- **Boolean parameters:** Pass Python booleans such as `True` and `False` for
+  optional boolean query parameters, including `indicative`,
+  `include_underlying_quote`, `need_extended_hours_data`, and
+  `need_previous_close`.
 
-The raw `Client.get_price_history` method supports period-based queries or an
-explicit start and end time. The `get_price_history_every_*` convenience
-methods use an explicit date range and do not send the redundant `period`
-parameter. If omitted, their start time defaults to January 1, 1971 UTC and
-their end time defaults to the current time. Schwab may limit the returned
-history based on candle frequency.
+## Documentation and contributing
 
-### Order history
+- [Getting started](docs/getting-started.rst) and [authentication](docs/auth.rst)
+- [Client API](docs/client.rst), [streaming](docs/streaming.rst), and
+  [order builders](docs/order-builder.rst)
+- [Order templates](docs/order-templates.rst) and
+  [migration from tda-api](docs/tda-transition.rst)
+- [Contributing guide](CONTRIBUTING.rst) and [changelog](CHANGELOG.md)
 
-The order-history endpoints have different maximum ranges. When date bounds
-are omitted:
-
-- `get_orders_for_account` requests the preceding 365 days.
-- `get_orders_for_all_linked_accounts` requests the preceding 60 days.
-
-Both methods default the end of the range to the current time. Pass explicit
-date bounds when a narrower range is required.
-
-### Boolean query parameters
-
-Optional boolean parameters must be actual Python `bool` values. For example,
-pass `indicative=True`, not `indicative='true'`. This validation also applies to
-`include_underlying_quote`, `need_extended_hours_data`, and
-`need_previous_close`.
-
-## Migrating from `tda-api`
-
-The former TD Ameritrade APIs are no longer available, so `tda-api` cannot be
-used for new requests. See the
-[transition guide](docs/tda-transition.rst)
-for migration instructions.
-
-## Why use `schwab-py`?
-
-1. **Safer authentication.** The library implements Schwab's OAuth callback
-   flow and manages token refresh, avoiding the need to build security-sensitive
-   authentication code from scratch.
-2. **Minimal API wrapping.** Methods expose Schwab's endpoints without hiding
-   the underlying HTTP responses, allowing callers to handle status codes and
-   response payloads directly.
-3. **Order-building utilities.** Templates and builders make common equity and
-   option orders easier to construct while retaining access to raw order specs.
-4. **Synchronous and asynchronous clients.** Applications can choose the model
-   that best fits their workload, including asynchronous streaming support.
+The [upstream documentation](https://schwab-py.readthedocs.io/en/latest/) may
+cover a different version. Report bugs or suggest improvements using
+[GitHub Issues](https://github.com/yoshishima/TalkToChuck/issues), or contribute
+through a [pull request](https://github.com/yoshishima/TalkToChuck/pulls).
 
 ## Limitations
 
-- The API is not connected to thinkorswim-specific functionality, although it
-  can access and trade against the same eligible Schwab accounts.
-- Paper trading is not supported.
-- Historical option pricing data is not available.
-- API availability, permissions, limits, and response formats are controlled by
-  Charles Schwab and may change independently of this library.
+Paper trading and historical option pricing data are not supported. The API
+does not provide thinkorswim-specific functionality, though it can access and
+trade against eligible Schwab accounts. Schwab controls API availability,
+permissions, limits, and response formats.
 
-## Documentation and support
+## License and disclaimer
 
-The documentation for this fork is in the [docs directory](docs/). The
-[upstream Read the Docs site](https://schwab-py.readthedocs.io/en/latest/)
-may cover a different version. Community support is available through the
-[upstream Discord server](https://discord.gg/BEr6y6Xqyv).
-
-Bug reports and suggestions can be submitted through
-[GitHub Issues](https://github.com/yoshishima/schwab-py/issues). Contributions are
-welcome through [pull requests](https://github.com/yoshishima/schwab-py/pulls).
-
-`schwab-py` is released under the
-[MIT License](LICENSE).
-
-## Disclaimer
-
-`schwab-py` is an unofficial API wrapper. It is not endorsed by or affiliated
-with Charles Schwab or any associated organization. Review and comply with the
-terms of service for the underlying APIs. The project authors accept no
-responsibility for damage resulting from use of this package. See the
-[LICENSE](LICENSE) file for
-details.
+Released under the [MIT License](LICENSE). This project is unofficial and is
+not affiliated with or endorsed by Charles Schwab. Review the terms of service
+for the APIs you use; see the license for warranty and liability details.
