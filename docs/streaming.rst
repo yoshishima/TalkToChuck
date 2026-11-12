@@ -89,6 +89,11 @@ stop a synchronous request that is already running in that worker thread.
 
 .. automethod:: schwab.streaming.StreamClient.login
 
+Incoming WebSocket messages default to a maximum of 4 MiB. Override this limit
+using, for example, ``await stream.login(websocket_connect_args={'max_size':
+8 * 1024 * 1024})``. A larger limit can increase memory use; ``None`` disables
+the limit. The limit applies to a complete message, including fragmented ones.
+
 
 -----------
 Logging Out
@@ -105,7 +110,8 @@ Subscribing to Streams
 
 These functions have names that follow the pattern ``SERVICE_NAME_subs``. These 
 functions send a request to enable streaming data for a particular data stream. 
-They are *not* thread safe, so they should only be called in series.
+Calls on the same service are serialized; calls on different services may run
+concurrently on the client's event loop. The client is not thread safe.
 
 When subscriptions are called multiple times on the same stream, the results 
 vary. What's more, these results aren't documented in the official 
@@ -128,6 +134,18 @@ These functions have names that follow the pattern ``SERVICE_NAME_add``.
 These functions send a request to add to the list of subscribed symbols for a
 particular data stream.
 
+For level-one services, omitting ``fields`` reuses the fields from the last
+acknowledged ``SUBS`` for that service. If there is no such subscription, all
+fields are requested. Pass ``fields`` explicitly to select a different set.
+Schwab's treatment of different field sets for the same service is not verified
+here; use consistent fields if your application depends on uniform updates.
+
+Symbol lists must be nonempty. Duplicate symbols are removed, and large lists
+are split into requests of at most 500 symbols by default. Set the positive
+``max_symbols_per_request`` constructor argument to change this client-side
+limit. A split subscription sends ``SUBS`` followed by ``ADD`` requests; if a
+later request fails, earlier acknowledged chunks remain subscribed.
+
 
 -------------------------
 Un-Subscribing to Streams
@@ -135,9 +153,23 @@ Un-Subscribing to Streams
 
 These functions have names that follow the pattern ``SERVICE_NAME_unsubs``.
 These functions send a request to disable the symbols of a streaming data for a
-particular data stream. They are *not* thread safe, so they should only be
-called in series. When unsubscribing to services with symbols, symbols which
+particular data stream. When unsubscribing to services with symbols, symbols which
 were not explicitly unsubscribed remain subscribed.
+
+The client tracks successfully acknowledged subscriptions and removals. After
+an unexpected disconnect, call ``login()`` and then ``resubscribe()`` to replay
+that state. This does not reconnect automatically or recover data missed while
+disconnected. A timeout or cancellation can leave server state uncertain even
+though no acknowledgement was recorded; reconcile application state as needed.
+Restoration failures leave the registry available for retry.
+
+``await stream.view(service, symbols, fields=fields)`` sends ``VIEW`` for a
+level-one service and records acknowledged field changes for restoration.
+``await stream.send_requests(requests)`` sends multiple low-level request
+objects in one message; each object contains ``service``, ``command`` and
+``parameters``. Low-level requests do not update the subscription registry, so
+applications using them for subscription changes must manage restoration. A
+batch can partially succeed; its acknowledgements are validated individually.
 
 
 --------------------
@@ -191,6 +223,13 @@ backpressure also limits how quickly your application reads from the socket.
 Slow handlers can still delay updates; handlers should finish promptly and use
 timeouts for external I/O.
 
+Large ordinary market-data entries yield periodically during relabeling, and
+dispatch yields between groups of top-level entries. JSON decoding, individual
+large values, and specialized book relabeling still run synchronously.
+Market-data DEBUG records contain a count rather than the full payload by default.
+Set ``log_stream_payloads=True`` to include redacted payloads for diagnostics;
+rendering those records can be expensive.
+
 If a capacity wait is canceled, the next ``handle_message()`` call resumes the
 message at its next uncalled handler. Handlers already invoked are not repeated.
 Restored messages are dispatched before newer queued messages, including while
@@ -211,6 +250,8 @@ from the previous connection to raise ``schwab.streaming.StreamClosedError``,
 a subclass of ``ConnectionError``. This includes consumers waiting for dispatch
 capacity or behind another consumer. Explicitly canceling a consumer task still
 raises ``asyncio.CancelledError``.
+Unexpected WebSocket closure also raises ``StreamClosedError``; its cause holds
+the underlying WebSocket exception. After closure, log in again before use.
 
 Logout and reconnect cancel pending handler tasks from the previous connection.
 Handlers should release their resources when canceled and propagate

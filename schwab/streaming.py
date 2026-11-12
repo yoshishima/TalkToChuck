@@ -1623,8 +1623,9 @@ class StreamClient(EnumEnforcer):
 
         :param symbols: Equity symbols to receive quotes for
         :param fields: Iterable of :class:`LevelOneEquityFields` representing
-                       the fields to return in streaming entries. If unset, all
-                       fields will be requested.
+                       the fields to return. If unset, reuse the last
+                       acknowledged subscription fields, or request all fields
+                       if there is no prior subscription.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneEquityFields.SYMBOL)
@@ -1847,8 +1848,9 @@ class StreamClient(EnumEnforcer):
 
         :param symbols: Option symbols to add to list to receive quotes for
         :param fields: Iterable of :class:`LevelOneOptionFields` representing
-                       the fields to return in streaming entries. If unset, all
-                       fields will be requested.
+                       the fields to return. If unset, reuse the last
+                       acknowledged subscription fields, or request all fields
+                       if there is no prior subscription.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneOptionFields.SYMBOL)
@@ -2024,8 +2026,9 @@ class StreamClient(EnumEnforcer):
 
         :param symbols: Futures symbols to add to the list to receive quotes for
         :param fields: Iterable of :class:`LevelOneFuturesFields` representing
-                       the fields to return in streaming entries. If unset, all
-                       fields will be requested.
+                       the fields to return. If unset, reuse the last
+                       acknowledged subscription fields, or request all fields
+                       if there is no prior subscription.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneFuturesFields.SYMBOL)
@@ -2168,8 +2171,9 @@ class StreamClient(EnumEnforcer):
 
         :param symbols: Forex symbols to add to list to receive quotes for
         :param fields: Iterable of :class:`LevelOneForexFields` representing
-                       the fields to return in streaming entries. If unset, all
-                       fields will be requested.
+                       the fields to return. If unset, reuse the last
+                       acknowledged subscription fields, or request all fields
+                       if there is no prior subscription.
 
         '''
         fields = self._with_required_field(
@@ -2320,7 +2324,8 @@ class StreamClient(EnumEnforcer):
         :param symbols: Futures options symbols add to list to receive quotes for
         :param fields: Iterable of :class:`LevelOneFuturesOptionsFields`
                        representing the fields to return in streaming entries.
-                       If unset, all fields will be requested.
+                       If unset, reuse the last acknowledged subscription fields,
+                       or request all fields if there is no prior subscription.
         '''
         fields = self._with_required_field(
                 fields, self.LevelOneFuturesOptionsFields.SYMBOL)
