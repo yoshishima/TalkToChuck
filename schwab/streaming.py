@@ -394,6 +394,7 @@ class StreamClient(EnumEnforcer):
         await self._close_connection()
         websocket_connect_args = dict(websocket_connect_args)
         websocket_connect_args.setdefault('logger', get_websocket_logger())
+        websocket_connect_args.setdefault('max_size', 4 * 1024 * 1024)
 
         # Record streamer subscription keys
         stream_info = prefs['streamerInfo'][0]

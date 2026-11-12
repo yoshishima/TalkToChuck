@@ -367,7 +367,8 @@ class StreamClientTest(IsolatedAsyncioTestCase):
 
         await self.client.login()
 
-        ws_connect.assert_awaited_once_with(ANY, ssl='ssl_context', logger=ANY)
+        ws_connect.assert_awaited_once_with(
+            ANY, ssl='ssl_context', logger=ANY, max_size=4 * 1024 * 1024)
 
 
     @no_duplicates
@@ -386,7 +387,8 @@ class StreamClientTest(IsolatedAsyncioTestCase):
         await self.client.login(websocket_connect_args={'args': 'yes'})
 
         ws_connect.assert_awaited_once_with(
-            ANY, ssl='ssl_context', args='yes', logger=ANY)
+            ANY, ssl='ssl_context', args='yes', logger=ANY,
+            max_size=4 * 1024 * 1024)
 
 
     @no_duplicates

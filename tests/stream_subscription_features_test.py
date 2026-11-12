@@ -80,3 +80,16 @@ class SymbolChunkTests(unittest.IsolatedAsyncioTestCase):
             await client.level_one_equity_subs(['A', 'B'])
         self.assertEqual(list(client._subscriptions['LEVELONE_EQUITIES']), ['A'])
 
+
+class MessageSizeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_default_and_override_are_forwarded(self):
+        from unittest.mock import patch
+        client = StreamClient(Mock())
+        info = {'schwabClientCorrelId': 'c', 'schwabClientCustomerId': 'u',
+                'schwabClientChannel': 'ch', 'schwabClientFunctionId': 'f',
+                'streamerSocketUrl': 'wss://example.test'}
+        with patch('schwab.streaming.ws_client.connect', new_callable=AsyncMock) as connect:
+            await client._init_from_preferences({'streamerInfo': [info]}, {})
+            self.assertEqual(connect.await_args.kwargs['max_size'], 4 * 1024 * 1024)
+            await client._init_from_preferences({'streamerInfo': [info]}, {'max_size': None})
+            self.assertIsNone(connect.await_args.kwargs['max_size'])
