@@ -3,11 +3,13 @@
 Notable changes to this fork are summarized below. For the complete history,
 see the repository's commits and tags.
 
-## Unreleased
+## 1.7.7 — 2026-11-12
 
 - Refresh the README and update links to this repository.
 - Use a more precise clock for order request pacing.
 - Detach streaming parse errors from the active reader.
+- Prevent requests from an old streaming connection from being sent on its
+  replacement, and serialize concurrent logins to avoid leaking sockets.
 
 ## 1.7.6 — 2026-11-11
 
