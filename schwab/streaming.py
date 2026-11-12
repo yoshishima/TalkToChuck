@@ -212,12 +212,15 @@ class StreamClient(EnumEnforcer):
                  max_pending_handler_tasks=100, max_pending_messages=1000,
                  offload_sync_preferences=False, on_handler_error=None,
                  sequential_handler_services=(), copy_messages=True,
-                 max_symbols_per_request=500):
+                 max_symbols_per_request=500, log_stream_payloads=False):
         super().__init__(enforce_enums)
 
         if type(copy_messages) is not bool:
             raise ValueError('copy_messages must be a bool')
         self._copy_messages = copy_messages
+        if type(log_stream_payloads) is not bool:
+            raise ValueError('log_stream_payloads must be a bool')
+        self._log_stream_payloads = log_stream_payloads
         if type(max_symbols_per_request) is not int or max_symbols_per_request <= 0:
             raise ValueError('max_symbols_per_request must be a positive int')
         self._max_symbols_per_request = max_symbols_per_request
@@ -359,9 +362,14 @@ class StreamClient(EnumEnforcer):
             raise UnparsableMessage(
                 raw, cause, 'Invalid stream message envelope') from cause
 
-        self.logger.debug(
-            'Receive %s: Returning message from stream: %s',
-            self.req_num(), LazyLog(lambda: redact_json(ret, stream=True)))
+        if ret.get('data') and not self._log_stream_payloads:
+            self.logger.debug(
+                'Receive %s: stream message with %s data entries',
+                self.req_num(), len(ret['data']))
+        else:
+            self.logger.debug(
+                'Receive %s: Returning message from stream: %s',
+                self.req_num(), LazyLog(lambda: redact_json(ret, stream=True)))
 
         return ret
 

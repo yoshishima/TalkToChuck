@@ -93,3 +93,16 @@ class MessageSizeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(connect.await_args.kwargs['max_size'], 4 * 1024 * 1024)
             await client._init_from_preferences({'streamerInfo': [info]}, {'max_size': None})
             self.assertIsNone(connect.await_args.kwargs['max_size'])
+
+class StreamLoggingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_data_summary_skips_payload_redaction(self):
+        import json
+        from unittest.mock import patch
+        client = StreamClient(Mock())
+        client._socket = AsyncMock()
+        client._socket.recv.return_value = json.dumps({'data': [{'service': 'TEST', 'secret': 'private'}]})
+        with patch('schwab.streaming.redact_json') as redact, self.assertLogs('schwab.streaming', level='DEBUG') as logs:
+            await client._receive()
+        redact.assert_not_called()
+        self.assertIn('1 data entries', logs.output[0])
+        self.assertNotIn('private', logs.output[0])

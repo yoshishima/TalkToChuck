@@ -74,7 +74,7 @@ class LoggingPrivacyTest(unittest.IsolatedAsyncioTestCase):
             'service': 'SYNTHETIC',
             'authentication': {'credential': {'value': marker}},
         }]})
-        client = streaming.StreamClient(Mock())
+        client = streaming.StreamClient(Mock(), log_stream_payloads=True)
         client._socket = socket
         with patch.object(schwab, 'LOG_REDACTOR', debug.LogRedactor()), \
                 self.assertLogs('schwab.streaming', level=logging.DEBUG) as logs:
