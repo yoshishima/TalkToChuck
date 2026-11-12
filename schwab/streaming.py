@@ -273,6 +273,8 @@ class StreamClient(EnumEnforcer):
         # Internal fields
         self._request_id = 0
         self._last_subscription_fields = {}
+        self._subscriptions = {}
+        self._subscription_locks = defaultdict(asyncio.Lock)
         self._handlers = defaultdict(list)
         self._handler_tasks = set()
         self._max_pending_handler_tasks = max_pending_handler_tasks
@@ -650,8 +652,16 @@ class StreamClient(EnumEnforcer):
 
     async def _service_op(self, symbols, service, command, field_type=None,
                           *, fields=None):
+        async with self._subscription_locks[service]:
+            await self._service_op_locked(
+                symbols, service, command, field_type, fields=fields)
+
+    async def _service_op_locked(self, symbols, service, command, field_type=None,
+                                 *, fields=None, converted=False, record=True):
         if isinstance(symbols, str):
             symbols = [symbols]
+        else:
+            symbols = list(symbols)
 
         if field_type is not None:
             previous_fields = False
@@ -663,7 +673,7 @@ class StreamClient(EnumEnforcer):
                 else:
                     fields = field_type.all_fields()
 
-            if not previous_fields:
+            if not previous_fields and not converted:
                 fields = self.convert_enum_iterable(fields, field_type)
             if not fields:
                 raise ValueError(
@@ -690,8 +700,43 @@ class StreamClient(EnumEnforcer):
 
         await self._send_request_and_await_response(
                 request, request_id, service, command)
-        if command == 'SUBS' and field_type is not None:
-            self._last_subscription_fields[service] = tuple(fields)
+        if record:
+            if command in ('SUBS', 'ADD'):
+                if command == 'SUBS' or service not in self._subscriptions:
+                    self._subscriptions[service] = {}
+                values = tuple(fields) if field_type is not None else None
+                for symbol in symbols:
+                    self._subscriptions[service][symbol] = (field_type, values)
+                if command == 'SUBS' and field_type is not None:
+                    self._last_subscription_fields[service] = values
+            elif command == 'UNSUBS' and service in self._subscriptions:
+                if service == 'ACCT_ACTIVITY':
+                    self._subscriptions[service].clear()
+                else:
+                    for symbol in symbols:
+                        self._subscriptions[service].pop(symbol, None)
+                if not self._subscriptions[service]:
+                    del self._subscriptions[service]
+                    self._last_subscription_fields.pop(service, None)
+
+    async def resubscribe(self):
+        '''Restore acknowledged subscriptions after a successful login.
+
+        Failures leave the registry intact so the caller can retry. A request
+        that timed out before its acknowledgement may need reconciliation.
+        '''
+        for service in list(self._subscriptions):
+            async with self._subscription_locks[service]:
+                entries = self._subscriptions.get(service, {})
+                groups = {}
+                for symbol, spec in entries.items():
+                    if service == 'ACCT_ACTIVITY':
+                        symbol = self._stream_correl_id
+                    groups.setdefault(spec, []).append(symbol)
+                for index, ((field_type, fields), symbols) in enumerate(groups.items()):
+                    await self._service_op_locked(
+                        symbols, service, 'SUBS' if index == 0 else 'ADD',
+                        field_type, fields=fields, converted=True, record=False)
 
     @staticmethod
     def _with_required_field(fields, required_field):
@@ -947,6 +992,7 @@ class StreamClient(EnumEnforcer):
             self._dispatch_lock = asyncio.Lock()
             self._reader_wakeup = asyncio.Event()
             self._service_handler_locks.clear()
+            self._subscription_locks.clear()
         self._event_loop = loop
 
         # Fetch required data and initialize the client
