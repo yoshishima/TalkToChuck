@@ -5886,6 +5886,7 @@ class StreamClientTest(IsolatedAsyncioTestCase):
     @no_duplicates
     async def test_cancelled_handle_message_restores_delivered_message(self):
         stream_item = self.streaming_entry('CHART_EQUITY', 'SUBS')
+        self.client._socket = AsyncMock()
 
         async def deliver_message_and_cancel():
             self.client._message_waiters[0].set_result(stream_item)

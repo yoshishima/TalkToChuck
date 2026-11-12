@@ -1043,6 +1043,12 @@ class StreamClient(EnumEnforcer):
             await self._handle_message()
 
     async def _handle_message(self):
+        # A reader may still be finishing handler cancellation after it has
+        # closed the socket. Do not queue a waiter that it can no longer serve.
+        if self._socket is None:
+            if self._connection_lost:
+                raise StreamClosedError('Stream connection lost')
+            raise ValueError('Socket not open. Did you forget to call login()?')
         generation = self._connection_generation
         loop = asyncio.get_running_loop()
         waiter = loop.create_future()

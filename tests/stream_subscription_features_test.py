@@ -109,6 +109,48 @@ class StreamLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('private', logs.output[0])
 
 class DisconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_during_handler_cleanup_fails_without_waiting_for_reader(self):
+        import json
+        from websockets.exceptions import ConnectionClosed
+        from schwab.streaming import StreamClosedError
+
+        client = StreamClient(Mock())
+        socket = client._socket = AsyncMock()
+        socket.recv.side_effect = [
+            json.dumps({'data': [{'service': 'LEVELONE_EQUITIES', 'content': []}]}),
+            ConnectionClosed(None, None),
+        ]
+        started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def handler(message):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+
+        client.add_level_one_equity_handler(handler)
+        await client.handle_message()
+        await started.wait()
+        with self.assertRaises(StreamClosedError):
+            await client.handle_message()
+        await cleanup_started.wait()
+        reader = client._reader_task
+        self.assertIsNotNone(reader)
+        self.assertFalse(reader.done())
+        try:
+            for _ in range(3):
+                with self.assertRaises(StreamClosedError):
+                    await asyncio.wait_for(client.handle_message(), timeout=0.2)
+            self.assertFalse(client._message_waiters)
+        finally:
+            release_cleanup.set()
+            await asyncio.wait_for(asyncio.gather(reader, return_exceptions=True),
+                                   timeout=1)
+
     async def test_recv_disconnect_closes_socket_and_normalizes_error(self):
         from websockets.exceptions import ConnectionClosed
         from schwab.streaming import StreamClosedError
