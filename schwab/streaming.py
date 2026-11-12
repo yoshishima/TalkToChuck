@@ -272,6 +272,7 @@ class StreamClient(EnumEnforcer):
 
         # Internal fields
         self._request_id = 0
+        self._last_subscription_fields = {}
         self._handlers = defaultdict(list)
         self._handler_tasks = set()
         self._max_pending_handler_tasks = max_pending_handler_tasks
@@ -653,10 +654,17 @@ class StreamClient(EnumEnforcer):
             symbols = [symbols]
 
         if field_type is not None:
+            previous_fields = False
             if fields is None:
-                fields = field_type.all_fields()
+                previous = self._last_subscription_fields.get(service)
+                if command == 'ADD' and previous is not None:
+                    fields = previous
+                    previous_fields = True
+                else:
+                    fields = field_type.all_fields()
 
-            fields = self.convert_enum_iterable(fields, field_type)
+            if not previous_fields:
+                fields = self.convert_enum_iterable(fields, field_type)
             if not fields:
                 raise ValueError(
                     'fields must not be empty; pass None to request all fields')
@@ -682,6 +690,8 @@ class StreamClient(EnumEnforcer):
 
         await self._send_request_and_await_response(
                 request, request_id, service, command)
+        if command == 'SUBS' and field_type is not None:
+            self._last_subscription_fields[service] = tuple(fields)
 
     @staticmethod
     def _with_required_field(fields, required_field):
