@@ -1,4 +1,5 @@
 from authlib.integrations.httpx_client import AsyncOAuth2Client, OAuth2Client
+from authlib.integrations.base_client.errors import OAuthError
 
 import collections
 import asyncio as asyncio_module
@@ -273,6 +274,7 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                                                 keepalive_expiry=60.0))
     if not asyncio:
         _serialize_sync_token_refresh(session)
+    _install_refresh_fallback(session, asynchronous=asyncio)
 
     return client_class(
         api_key,
@@ -299,6 +301,51 @@ def _serialize_sync_token_refresh(session):
 
     session.ensure_active_token = serialized_ensure_active_token
     return session
+
+
+def _install_refresh_fallback(session, *, asynchronous):
+    '''Use an unchanged, sufficiently valid token after eligible failures.'''
+    session._schwab_refresh_fallback = {
+        'transient': True, 'allow_oauth_errors': False, 'min_valid_seconds': 30.0}
+    ensure = session.ensure_active_token
+
+    def eligible(exc, old_token):
+        policy = session._schwab_refresh_fallback
+        if not isinstance(old_token, dict) or session.token is not old_token:
+            return False
+        expiry = old_token.get('expires_at')
+        if (type(expiry) not in (int, float) or not math.isfinite(expiry)
+                or expiry - time.time() <= policy['min_valid_seconds']):
+            return False
+        if isinstance(exc, OAuthError):
+            return policy['allow_oauth_errors']
+        if not policy['transient']:
+            return False
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code == 429 or 500 <= exc.response.status_code < 600
+        return isinstance(exc, httpx.TransportError)
+
+    if asynchronous:
+        async def wrapped(token=None):
+            old_token = session.token
+            try:
+                return await ensure(old_token)
+            except Exception as exc:
+                if not eligible(exc, old_token):
+                    raise
+                get_logger().warning('Token refresh failed; using the unexpired access token')
+        session.ensure_active_token = wrapped
+    else:
+        def wrapped(token=None):
+            old_token = session.token
+            try:
+                return ensure(old_token)
+            except Exception as exc:
+                if not eligible(exc, old_token):
+                    raise
+                get_logger().warning('Token refresh failed; using the unexpired access token')
+                return True
+        session.ensure_active_token = wrapped
 
 
 ################################################################################

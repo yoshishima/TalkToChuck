@@ -214,6 +214,18 @@ retried later; requests can still wait for a refresh or fail if it cannot be
 completed. Custom token writers must be safe on the worker thread for a sync
 client and should avoid blocking the event loop for an async client.
 
+If an automatic refresh fails with a transient transport error, a 5xx response,
+or an HTTP 429 error, the auth-created client can continue with the unchanged
+access token when its recorded expiration is more than 30 seconds away. This
+does not guarantee that Schwab will accept the token. An OAuth error such as
+``invalid_grant`` still propagates by default because credentials may have been
+revoked. ``configure_refresh_fallback(transient=False)`` disables transient
+fallback; ``allow_oauth_errors=True`` explicitly also allows OAuth rejections.
+Use that option only if the application can handle rejected credentials.
+``min_valid_seconds`` adjusts the minimum remaining lifetime. Persistence
+errors and failures after a token has changed are never suppressed. Configure
+the policy before sharing a client between threads or tasks.
+
 
 +++++++++++++
 Thread Safety

@@ -304,6 +304,25 @@ class BaseClient(EnumEnforcer, ABC):
         than the documented seven day term.'''
         return self.token_metadata.token_age()
 
+    def configure_refresh_fallback(self, *, transient=True,
+                                   allow_oauth_errors=False,
+                                   min_valid_seconds=30.0):
+        '''Configure fallback to an unexpired token after a refresh failure.
+
+        OAuth rejections are propagated unless explicitly allowed. Configure
+        before sharing the client between threads or tasks.
+        '''
+        if type(transient) is not bool or type(allow_oauth_errors) is not bool:
+            raise ValueError('refresh fallback options must be bools')
+        if (type(min_valid_seconds) not in (int, float)
+                or not math.isfinite(min_valid_seconds) or min_valid_seconds < 0):
+            raise ValueError('min_valid_seconds must be a nonnegative finite number')
+        if not hasattr(self.session, '_schwab_refresh_fallback'):
+            raise ValueError('refresh fallback requires a session created by schwab.auth')
+        self.session._schwab_refresh_fallback = {
+            'transient': transient, 'allow_oauth_errors': allow_oauth_errors,
+            'min_valid_seconds': float(min_valid_seconds)}
+
     def _background_refresh_delay(self):
         '''Seconds until Authlib's refresh window, or a periodic recheck.'''
         token = getattr(self.session, 'token', None)
