@@ -338,6 +338,7 @@ class StreamClient(EnumEnforcer):
         # ``json.loads``
         self.json_decoder = NaiveJsonStreamDecoder()
         self._send_lock = asyncio.Lock()
+        self._login_lock = asyncio.Lock()
         self._dispatch_lock = asyncio.Lock()
         self._message_waiters = deque()
         self._response_waiters = {}
@@ -701,6 +702,9 @@ class StreamClient(EnumEnforcer):
     async def _send_request_and_await_response(
             self, request, request_id, service, command, *,
             acquire_send_lock=True):
+        # A request queued behind the send lock belongs to this connection,
+        # even if another login replaces the socket before the lock is free.
+        generation = self._connection_generation
         loop = asyncio.get_running_loop()
         waiter = loop.create_future()
         self._response_waiters[request_id] = waiter
@@ -708,8 +712,12 @@ class StreamClient(EnumEnforcer):
         try:
             if acquire_send_lock:
                 async with self._send_lock:
+                    if generation != self._connection_generation:
+                        raise StreamClosedError('Stream connection replaced')
                     await self._send({'requests': [request]})
             else:
+                if generation != self._connection_generation:
+                    raise StreamClosedError('Stream connection replaced')
                 await self._send({'requests': [request]})
             self._ensure_reader()
             if self._response_timeout is None:
@@ -734,6 +742,7 @@ class StreamClient(EnumEnforcer):
         Each item is a mapping with service, command and parameters keys.
         These low-level requests do not update the subscription registry.
         '''
+        generation = self._connection_generation
         requests = list(requests)
         if not requests:
             raise ValueError('requests must not be empty')
@@ -754,6 +763,8 @@ class StreamClient(EnumEnforcer):
             pending.append((request, request_id, waiter))
         try:
             async with self._send_lock:
+                if generation != self._connection_generation:
+                    raise StreamClosedError('Stream connection replaced')
                 await self._send({'requests': [item[0] for item in pending]})
             self._ensure_reader()
             waiting = asyncio.gather(*(item[2] for item in pending),
@@ -779,12 +790,16 @@ class StreamClient(EnumEnforcer):
 
     async def _service_op(self, symbols, service, command, field_type=None,
                           *, fields=None):
+        generation = self._connection_generation
         async with self._subscription_locks[service]:
+            if generation != self._connection_generation:
+                raise StreamClosedError('Stream connection replaced')
             await self._service_chunks_locked(
                 symbols, service, command, field_type, fields=fields)
 
     async def _service_chunks_locked(self, symbols, service, command, field_type,
                                      *, fields=None, converted=False, record=True):
+        generation = self._connection_generation
         if self._socket is None:
             if self._connection_lost:
                 raise StreamClosedError('Stream connection lost')
@@ -804,6 +819,8 @@ class StreamClient(EnumEnforcer):
         if fields is not None and not isinstance(fields, (str, Enum)):
             fields = tuple(fields)
         for offset in range(0, len(symbols), self._max_symbols_per_request):
+            if generation != self._connection_generation:
+                raise StreamClosedError('Stream connection replaced')
             chunk = symbols[offset:offset + self._max_symbols_per_request]
             chunk_command = 'ADD' if command == 'SUBS' and offset else command
             await self._service_op_locked(
@@ -888,8 +905,11 @@ class StreamClient(EnumEnforcer):
         Failures leave the registry intact so the caller can retry. A request
         that timed out before its acknowledgement may need reconciliation.
         '''
+        generation = self._connection_generation
         for service in list(self._subscriptions):
             async with self._subscription_locks[service]:
+                if generation != self._connection_generation:
+                    raise StreamClosedError('Stream connection replaced')
                 entries = self._subscriptions.get(service, {})
                 groups = {}
                 for symbol, spec in entries.items():
@@ -897,6 +917,8 @@ class StreamClient(EnumEnforcer):
                         symbol = self._stream_correl_id
                     groups.setdefault(spec, []).append(symbol)
                 for index, ((field_type, fields), symbols) in enumerate(groups.items()):
+                    if generation != self._connection_generation:
+                        raise StreamClosedError('Stream connection replaced')
                     await self._service_chunks_locked(
                         symbols, service, 'SUBS' if index == 0 else 'ADD',
                         field_type, fields=fields, converted=True, record=False)
@@ -1181,12 +1203,17 @@ class StreamClient(EnumEnforcer):
                                    'before using it on another event loop')
             self._handler_slots = asyncio.Semaphore(self._max_pending_handler_tasks)
             self._send_lock = asyncio.Lock()
+            self._login_lock = asyncio.Lock()
             self._dispatch_lock = asyncio.Lock()
             self._reader_wakeup = asyncio.Event()
             self._service_handler_locks.clear()
             self._subscription_locks.clear()
         self._event_loop = loop
 
+        async with self._login_lock:
+            await self._login(websocket_connect_args)
+
+    async def _login(self, websocket_connect_args):
         # Fetch required data and initialize the client
         if isinstance(self._client, Client) and not self._offload_sync_preferences:
             warnings.warn(
@@ -1214,6 +1241,7 @@ class StreamClient(EnumEnforcer):
         await self._init_from_preferences(
                 r, websocket_connect_args if websocket_connect_args else {})
 
+        generation = self._connection_generation
         try:
             # Build and send the request object
             request_parameters = {
@@ -1225,12 +1253,15 @@ class StreamClient(EnumEnforcer):
                 service='ADMIN', command='LOGIN',
                 parameters=request_parameters)
             async with self._send_lock:
+                if generation != self._connection_generation:
+                    raise StreamClosedError('Stream connection replaced')
                 await self._send_request_and_await_response(
                         request, request_id, 'ADMIN', 'LOGIN',
                         acquire_send_lock=False)
         except BaseException:
             try:
-                await self._close_connection()
+                if generation == self._connection_generation:
+                    await self._close_connection()
             except Exception:
                 self.logger.exception('Failed to close stream after login failure')
             raise
@@ -1244,6 +1275,7 @@ class StreamClient(EnumEnforcer):
         no further stream operations are possible. The client must be
         re-initialized with :meth:`login` to perform further operations.
         '''
+        generation = self._connection_generation
         request, request_id = self._make_request(
             service='ADMIN', command='LOGOUT',
             parameters={})
@@ -1251,7 +1283,8 @@ class StreamClient(EnumEnforcer):
             await self._send_request_and_await_response(
                     request, request_id, 'ADMIN', 'LOGOUT')
         finally:
-            await self._close_connection()
+            if generation == self._connection_generation:
+                await self._close_connection()
 
     ##########################################################################
     # ACCT_ACTIVITY

@@ -250,7 +250,9 @@ itself before returning it can perform side effects before the lock is acquired.
 Logout or reconnect causes pending message consumers and subscription requests
 from the previous connection to raise ``schwab.streaming.StreamClosedError``,
 a subclass of ``ConnectionError``. This includes consumers waiting for dispatch
-capacity or behind another consumer. Explicitly canceling a consumer task still
+capacity or behind another consumer, and requests waiting for a send or service
+lock. Concurrent calls to ``login()`` are serialized; each successful login
+replaces the previous connection. Explicitly canceling a consumer task still
 raises ``asyncio.CancelledError``.
 Unexpected WebSocket closure also raises ``StreamClosedError``; its cause holds
 the underlying WebSocket exception. After closure, log in again before use.
