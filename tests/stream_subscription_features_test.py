@@ -184,3 +184,13 @@ class ProtocolFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r['response'][0]['requestid'] for r in result], ['0', '1'])
         self.assertEqual(len(json.loads(socket.send.await_args.args[0])['requests']), 2)
         self.assertEqual(client._overflow_items[0]['data'][0]['service'], 'UNKNOWN')
+
+class MixedFieldsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mixed_numeric_strings_and_ints_are_normalized(self):
+        client = StreamClient(Mock(), enforce_enums=False)
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        await client.level_one_equity_subs(['A'], fields=[1, '2', '01', '0'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,1,2')
+        await client.level_one_equity_add(['B'])
+        self.assertEqual(send.await_args.args[0]['parameters']['fields'], '0,1,2')

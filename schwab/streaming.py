@@ -830,7 +830,10 @@ class StreamClient(EnumEnforcer):
                     'fields must not be empty; pass None to request all fields')
             # Converted values are deduplicated so a required field that was
             # also passed as a raw value is not requested twice.
-            fields = sorted(set(fields))
+            fields = [int(value) if isinstance(value, str) and value.isdecimal()
+                      else value for value in fields]
+            fields = sorted(set(fields), key=lambda value: (
+                (0, value) if type(value) is int else (1, str(value))))
 
         # Check the connection before formatting keys: some keys, such as the
         # account activity key, only exist after login.
