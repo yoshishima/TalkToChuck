@@ -534,7 +534,7 @@ class ClientFromTokenFileTest(unittest.TestCase):
             token=self.raw_token,
             token_endpoint=_,
             update_token=_,
-            leeway=_)
+            leeway=_, limits=_)
 
     @no_duplicates
     @patch('schwab.auth.Client')
@@ -675,7 +675,7 @@ class ClientFromAccessFunctionsTest(unittest.TestCase):
             token=self.raw_token,
             token_endpoint=_,
             update_token=_,
-            leeway=_)
+            leeway=_, limits=_)
         token_read_func.assert_called_once()
 
         # Verify that the write function is called when the updater is called
@@ -716,7 +716,7 @@ class ClientFromAccessFunctionsTest(unittest.TestCase):
             token=self.raw_token,
             token_endpoint=_,
             update_token=_,
-            leeway=_)
+            leeway=_, limits=_)
         token_read_func.assert_called_once()
 
         # Verify that the write function is called when the updater is called
@@ -938,7 +938,7 @@ class ClientFromManualFlow(unittest.TestCase):
 
         sync_session.assert_called_with(
                 _, client_secret=APP_SECRET, token=_,
-                token_endpoint=auth.TOKEN_ENDPOINT, update_token=_, leeway=_)
+                token_endpoint=auth.TOKEN_ENDPOINT, update_token=_, leeway=_, limits=_)
 
         self.assertEqual([{
             'creation_timestamp': MOCK_NOW,

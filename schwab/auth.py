@@ -267,7 +267,10 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                             token=metadata.token,
                             token_endpoint=TOKEN_ENDPOINT,
                             update_token=update_token,
-                            leeway=300)
+                            leeway=300,
+                            limits=httpx.Limits(max_connections=100,
+                                                max_keepalive_connections=20,
+                                                keepalive_expiry=60.0))
     if not asyncio:
         _serialize_sync_token_refresh(session)
 

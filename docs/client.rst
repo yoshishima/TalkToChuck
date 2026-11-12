@@ -196,6 +196,10 @@ Closing the HTTP Session
 Clients keep a pool of HTTP connections open. Close it when you are done with a
 client, for example before discarding it in a long-running process:
 
+Clients created by the authentication helpers retain idle connections for up
+to 60 seconds. The server or network may close them sooner; keeping a connection
+in the pool does not guarantee that the next request can reuse it.
+
 .. automethod:: schwab.client.Client.close_session
 .. automethod:: schwab.client.AsyncClient.close_async_session
 
