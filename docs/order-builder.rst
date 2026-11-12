@@ -335,17 +335,20 @@ raise ``ValueError``. Explicit zero prices remain supported.
 Numeric prices must be ``int``, ``float`` or ``Decimal``; other types, such as
 ``bool`` or ``None``, raise ``ValueError``. Negative numeric prices also raise
 ``ValueError``: credits are expressed with ``OrderType.NET_CREDIT`` and a
-positive price. String prices and ``copy_price``/``copy_stop_price`` are passed
-through unchanged, as before.
+positive price. String prices are checked for a finite, nonnegative decimal and
+for the same two- or four-decimal precision described above. Extra trailing
+zeroes are allowed, and accepted strings are sent unchanged. Strings with extra
+nonzero decimal places now raise ``ValueError`` instead of being sent as-is.
+``copy_price`` and ``copy_stop_price`` retain their exact-value behavior.
 
 Child orders given as dictionaries must contain JSON-compatible values.
 ``None``, tuples and non-finite numbers raise ``ValueError`` naming the
 offending field, and an order that contains itself is rejected.
 
-This behavior is meant as a sane heuristic, and there are almost certainly 
-situations where it is not the correct thing to do. You can sidestep this entire 
-process by passing your price as a string, although be forewarned that Schwab 
-may reject your order or even interpret it in unexpected ways. 
+This precision rule is a heuristic, not validation of an instrument's actual
+tick size. If an instrument requires a different precision, use ``copy_price``
+or ``copy_stop_price`` to supply the exact value. Schwab may reject an invalid
+price or interpret it differently than intended.
 
 .. automethod:: schwab.orders.generic.OrderBuilder.set_price
 .. automethod:: schwab.orders.generic.OrderBuilder.copy_price
@@ -579,7 +582,7 @@ Option legs require positive whole-number quantities. Integral floats such as
 When every leg is an option, numeric limit and stop prices are truncated to two
 decimal places at build time, regardless of whether prices or legs were set
 first. This also applies to nested child builders. A nonzero option price that
-would become zero raises ``ValueError``. Explicit string prices and prices set
+would become zero raises ``ValueError``. Validated string prices and prices set
 through ``copy_price`` or ``copy_stop_price`` are preserved. Orders with equity
 or mixed legs retain the existing formatting. Two-decimal formatting does not
 validate every contract's permitted price increments.

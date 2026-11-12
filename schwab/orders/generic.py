@@ -109,6 +109,30 @@ def _format_price_input(price):
     return truncate_float(price, stacklevel=4)
 
 
+def _validate_string_price(price):
+    '''Check the library's usual precision without rounding the input.'''
+    try:
+        value = Decimal(price)
+    except InvalidOperation as exc:
+        raise ValueError('price must be a finite decimal string') from exc
+    if not value.is_finite():
+        raise ValueError('price must be finite')
+    if value < 0:
+        raise ValueError('price must not be negative')
+    places = 4 if 0 < value < 1 else 2
+    digits = value.as_tuple().digits
+    exponent = value.as_tuple().exponent
+    for digit in reversed(digits):
+        if digit != 0:
+            break
+        exponent += 1
+    if value != 0 and exponent < -places:
+        raise ValueError('price has more than {} significant decimal places; '
+                         'use copy_price or copy_stop_price for an exact value'
+                         .format(places))
+    return price
+
+
 def truncate_float(flt, *, stacklevel=2):
     if isinstance(flt, float):
         warnings.warn('passing floats to set_price and set_stop_price is '+
@@ -343,7 +367,7 @@ class OrderBuilder(EnumEnforcer):
         `str`. See :ref:`number_truncation`.
         '''
         if isinstance(stop_price, str):
-            self._stopPrice = stop_price
+            self._stopPrice = _validate_string_price(stop_price)
             self._numeric_prices.discard('stopPrice')
         else:
             self._stopPrice = _format_price_input(stop_price)
@@ -480,7 +504,7 @@ class OrderBuilder(EnumEnforcer):
         `str`. See :ref:`number_truncation`.
         '''
         if isinstance(price, str):
-            self._price = price
+            self._price = _validate_string_price(price)
             self._numeric_prices.discard('price')
         else:
             self._price = _format_price_input(price)

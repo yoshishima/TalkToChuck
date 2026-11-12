@@ -223,3 +223,20 @@ class RecentOrderPollingTests(unittest.IsolatedAsyncioTestCase):
                 for invalid in (0, -1, 366, True, float('nan')):
                     with self.assertRaises(ValueError):
                         client.get_recent_orders_for_account('acct', lookback_days=invalid)
+
+class StringPriceTests(unittest.TestCase):
+    def test_string_price_validation_preserves_exact_acceptable_input(self):
+        from schwab.orders.generic import OrderBuilder
+        for method, field in [('set_price', 'price'), ('set_stop_price', 'stopPrice')]:
+            for value in ('190.25', '190.2500', '0.1234', '0.0000', '-0.00'):
+                with self.subTest(method=method, value=value):
+                    self.assertEqual(getattr(OrderBuilder(), method)(value).build()[field], value)
+            for value in ('190.256', '0.12345', '-1.00', 'NaN', 'Infinity', 'invalid'):
+                with self.subTest(method=method, value=value), self.assertRaises(ValueError):
+                    getattr(OrderBuilder(), method)(value)
+
+    def test_copy_methods_keep_explicit_unusual_price(self):
+        from schwab.orders.generic import OrderBuilder
+        builder = OrderBuilder().copy_price('190.256').copy_stop_price('0.12345')
+        self.assertEqual(builder.build()['price'], '190.256')
+        self.assertEqual(builder.build()['stopPrice'], '0.12345')
