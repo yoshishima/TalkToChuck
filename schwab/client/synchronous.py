@@ -13,6 +13,7 @@ class Client(BaseClient):
         self._refresh_control_lock = threading.Lock()
         self._refresh_stop = threading.Event()
         self._refresh_thread = None
+        self._order_throttle_lock = threading.Lock()
 
     def start_token_refresh(self):
         '''Start an optional background token refresh worker for this client.'''
@@ -74,6 +75,17 @@ class Client(BaseClient):
         '''Run cancel_order in a worker thread without blocking the event loop.'''
         return await asyncio.to_thread(self.cancel_order, order_id, account_hash)
 
+    def _throttle_order(self, path):
+        if not self._is_order_mutation(path) or not self._order_min_interval:
+            return
+        with self._order_throttle_lock:
+            now = time.monotonic()
+            if self._last_order_request is not None:
+                delay = self._last_order_request + self._order_min_interval - now
+                if delay > 0:
+                    time.sleep(delay)
+            self._last_order_request = time.monotonic()
+
     def _get_request(self, path, params):
         self._warn_if_event_loop_running()
         dest = 'https://api.schwabapi.com' + path
@@ -102,30 +114,36 @@ class Client(BaseClient):
 
     def _post_request(self, path, data):
         self._warn_if_event_loop_running()
+        self._throttle_order(path)
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('POST', dest, data)
 
         resp = self.session.post(dest, json=data)
         self._log_response(resp, req_num)
+        self._check_order_response(path, resp)
         return resp
 
     def _put_request(self, path, data):
         self._warn_if_event_loop_running()
+        self._throttle_order(path)
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('PUT', dest, data)
 
         resp = self.session.put(dest, json=data)
         self._log_response(resp, req_num)
+        self._check_order_response(path, resp)
         return resp
 
     def _delete_request(self, path):
         self._warn_if_event_loop_running()
+        self._throttle_order(path)
         dest = 'https://api.schwabapi.com' + path
 
         req_num = self._log_request('DELETE', dest)
 
         resp = self.session.delete(dest)
         self._log_response(resp, req_num)
+        self._check_order_response(path, resp)
         return resp

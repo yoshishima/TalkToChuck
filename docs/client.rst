@@ -536,3 +536,14 @@ timeouts, rate limits, and selected server errors, call
 and is bounded by ``max_delay``; when a server's Retry-After exceeds that limit,
 the response is returned without retrying. Other HTTP methods are not retried.
 
+Order mutations return raw HTTP responses by default, including 429 and 5xx
+responses. Call ``client.configure_order_requests(raise_for_status=True)`` to
+raise ``httpx2.HTTPStatusError`` for unsuccessful order responses; the response
+and headers remain available on the exception. Optionally set, for example,
+``min_interval=0.25`` to space this client's order submission, replacement, and
+cancellation attempts by at least that many seconds. This is a local pacing
+control, not a guarantee of compliance with Schwab's rate limits: other clients,
+refresh latency, network timing, and server rules also matter. Configure it
+before sharing the client across threads or tasks. No order mutation is retried,
+including after a 429 or 5xx; a server error may leave the outcome uncertain.
+

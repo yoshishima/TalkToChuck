@@ -89,6 +89,9 @@ class BaseClient(EnumEnforcer, ABC):
         self._get_retry_count = 0
         self._get_retry_backoff = 0.5
         self._get_retry_max_delay = 30.0
+        self._order_min_interval = 0.0
+        self._order_raise_for_status = False
+        self._last_order_request = None
 
         schwab.LOG_REDACTOR.register(api_key, 'API_KEY')
 
@@ -177,6 +180,28 @@ class BaseClient(EnumEnforcer, ABC):
         self._get_retry_count = max_retries
         self._get_retry_backoff = backoff
         self._get_retry_max_delay = max_delay
+
+    def configure_order_requests(self, *, min_interval=0.0, raise_for_status=False):
+        '''Configure spacing and optional HTTP errors for order mutations.
+
+        Orders are never retried. Configure before concurrent client use.
+        '''
+        if (type(min_interval) not in (int, float)
+                or not math.isfinite(min_interval) or min_interval < 0):
+            raise ValueError('min_interval must be a nonnegative finite number')
+        if type(raise_for_status) is not bool:
+            raise ValueError('raise_for_status must be a bool')
+        self._order_min_interval = float(min_interval)
+        self._order_raise_for_status = raise_for_status
+
+    @staticmethod
+    def _is_order_mutation(path):
+        return (path.startswith('/trader/v1/accounts/')
+                and (path.endswith('/orders') or '/orders/' in path))
+
+    def _check_order_response(self, path, response):
+        if self._order_raise_for_status and self._is_order_mutation(path):
+            response.raise_for_status()
 
     def _get_retry_delay(self, response, attempt):
         if (attempt >= self._get_retry_count or (response is not None

@@ -151,3 +151,53 @@ class EventLoopOrderTests(unittest.IsolatedAsyncioTestCase):
         client = Client('key', session)
         await client.async_cancel_order('order-1', 'account-2')
         self.assertIn('/accounts/account-2/orders/order-1', session.delete.call_args.args[0])
+
+class OrderRequestPolicyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_order_errors_are_opt_in_and_never_retried(self):
+        import httpx2
+        from unittest.mock import AsyncMock
+        from schwab.client import Client, AsyncClient
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                request = httpx2.Request('POST', 'https://api.schwabapi.com/trader/v1/accounts/a/orders')
+                response = httpx2.Response(503, request=request)
+                session = Mock()
+                session.post = AsyncMock(return_value=response) if asynchronous else Mock(return_value=response)
+                client = (AsyncClient if asynchronous else Client)('key', session)
+                async def place():
+                    if asynchronous:
+                        return await client.place_order('a', {})
+                    return await client.async_place_order('a', {})
+                self.assertEqual((await place()).status_code, 503)
+                client.configure_order_requests(raise_for_status=True)
+                with self.assertRaises(httpx2.HTTPStatusError) as caught:
+                    await place()
+                self.assertIs(caught.exception.response, response)
+                self.assertEqual(session.post.call_count, 2)
+
+    async def test_concurrent_order_attempts_are_spaced(self):
+        import asyncio
+        import time
+        import httpx2
+        from unittest.mock import AsyncMock
+        from schwab.client import Client, AsyncClient
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                times = []
+                session = Mock()
+                def record(*args, **kwargs):
+                    times.append(time.monotonic())
+                    return httpx2.Response(201)
+                if asynchronous:
+                    async def async_record(*args, **kwargs):
+                        return record(*args, **kwargs)
+                    session.post = AsyncMock(side_effect=async_record)
+                else:
+                    session.post.side_effect = record
+                client = (AsyncClient if asynchronous else Client)('key', session)
+                client.configure_order_requests(min_interval=0.04)
+                tasks = [client.place_order('a', {}) if asynchronous
+                         else client.async_place_order('a', {}) for _ in range(3)]
+                await asyncio.gather(*tasks)
+                self.assertEqual(len(times), 3)
+                self.assertTrue(all(b - a >= 0.035 for a, b in zip(times, times[1:])), times)
