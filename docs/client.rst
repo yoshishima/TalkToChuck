@@ -406,6 +406,14 @@ Schwab endpoints. Both methods default the end of the range to the current
 time.
 
 .. automethod:: schwab.client.Client.get_orders_for_account
+
+For frequent polling when only recent activity is relevant, use
+``get_recent_orders_for_account(account_hash, lookback_days=1)``. It requests a
+one-day window by default and accepts a shorter fractional number of days.
+Older orders, including open orders, are excluded, so use an appropriately
+wide window or the full account query when reconciling complete order state.
+
+.. automethod:: schwab.client.Client.get_recent_orders_for_account
 .. automethod:: schwab.client.Client.get_orders_for_all_linked_accounts
 .. automethod:: schwab.client.Client.get_order
 .. autoclass:: schwab.client.Client.Order

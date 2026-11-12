@@ -550,6 +550,23 @@ class BaseClient(EnumEnforcer, ABC):
             to_entered_datetime=to_entered_datetime,
             status=status))
 
+    def get_recent_orders_for_account(self, account_hash, *, lookback_days=1,
+                                      max_results=None, status=None):
+        '''Get orders entered within a bounded recent window, for polling.
+
+        Older orders, including still-open orders, are excluded. The window
+        defaults to one day and may be a positive number up to 365 days.
+        '''
+        if (type(lookback_days) not in (int, float)
+                or not math.isfinite(lookback_days)
+                or not 0 < lookback_days <= 365):
+            raise ValueError('lookback_days must be greater than 0 and at most 365')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return self.get_orders_for_account(
+            account_hash, max_results=max_results,
+            from_entered_datetime=now - datetime.timedelta(days=lookback_days),
+            to_entered_datetime=now, status=status)
+
     def place_order(self, account_hash, order_spec):
         '''Place an order for a specific account. If order creation was
         successful, the response will contain the ID of the generated order. See

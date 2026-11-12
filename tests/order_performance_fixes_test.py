@@ -201,3 +201,25 @@ class OrderRequestPolicyTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(*tasks)
                 self.assertEqual(len(times), 3)
                 self.assertTrue(all(b - a >= 0.035 for a, b in zip(times, times[1:])), times)
+
+class RecentOrderPollingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recent_query_bounds_window_for_sync_and_async(self):
+        import datetime
+        from unittest.mock import AsyncMock
+        from schwab.client import Client, AsyncClient
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                client = (AsyncClient if asynchronous else Client)('key', Mock())
+                client._get_request = AsyncMock() if asynchronous else Mock()
+                result = client.get_recent_orders_for_account('acct', lookback_days=0.5, max_results=10)
+                if asynchronous:
+                    await result
+                path, params = client._get_request.call_args.args
+                self.assertIn('/accounts/acct/orders', path)
+                start = datetime.datetime.fromisoformat(params['fromEnteredTime'].replace('Z', '+00:00'))
+                end = datetime.datetime.fromisoformat(params['toEnteredTime'].replace('Z', '+00:00'))
+                self.assertAlmostEqual((end - start).total_seconds(), 12 * 3600, delta=0.002)
+                self.assertEqual(params['maxResults'], 10)
+                for invalid in (0, -1, 366, True, float('nan')):
+                    with self.assertRaises(ValueError):
+                        client.get_recent_orders_for_account('acct', lookback_days=invalid)
