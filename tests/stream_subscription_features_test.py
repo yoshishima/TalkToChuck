@@ -56,3 +56,27 @@ class SubscriptionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send.await_args.args[0]['parameters']['keys'], 'new')
         send.side_effect = None
         await client.resubscribe()
+
+class SymbolChunkTests(unittest.IsolatedAsyncioTestCase):
+    async def test_validates_deduplicates_and_chunks(self):
+        client = StreamClient(Mock(), max_symbols_per_request=2)
+        client._socket = object()
+        send = client._send_request_and_await_response = AsyncMock()
+        with self.assertRaises(ValueError):
+            await client.level_one_equity_subs([])
+        with self.assertRaises(ValueError):
+            await client.level_one_equity_subs(['A,'])
+        await client.level_one_equity_subs(['A', 'B', 'A', 'C'], fields=[client.LevelOneEquityFields.BID_PRICE])
+        requests = [call.args[0] for call in send.await_args_list]
+        self.assertEqual([(r['command'], r['parameters']['keys']) for r in requests], [('SUBS', 'A,B'), ('ADD', 'C')])
+        self.assertEqual([r['parameters']['fields'] for r in requests], ['0,1', '0,1'])
+        self.assertEqual(list(client._subscriptions['LEVELONE_EQUITIES']), ['A', 'B', 'C'])
+
+    async def test_partial_failure_records_only_acknowledged_chunks(self):
+        client = StreamClient(Mock(), max_symbols_per_request=1)
+        client._socket = object()
+        client._send_request_and_await_response = AsyncMock(side_effect=[None, RuntimeError('failed')])
+        with self.assertRaises(RuntimeError):
+            await client.level_one_equity_subs(['A', 'B'])
+        self.assertEqual(list(client._subscriptions['LEVELONE_EQUITIES']), ['A'])
+

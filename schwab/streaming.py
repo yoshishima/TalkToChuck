@@ -211,12 +211,16 @@ class StreamClient(EnumEnforcer):
                  enforce_enums=True, ssl_context=None, response_timeout=30.0,
                  max_pending_handler_tasks=100, max_pending_messages=1000,
                  offload_sync_preferences=False, on_handler_error=None,
-                 sequential_handler_services=(), copy_messages=True):
+                 sequential_handler_services=(), copy_messages=True,
+                 max_symbols_per_request=500):
         super().__init__(enforce_enums)
 
         if type(copy_messages) is not bool:
             raise ValueError('copy_messages must be a bool')
         self._copy_messages = copy_messages
+        if type(max_symbols_per_request) is not int or max_symbols_per_request <= 0:
+            raise ValueError('max_symbols_per_request must be a positive int')
+        self._max_symbols_per_request = max_symbols_per_request
 
         if on_handler_error is not None and (
                 not callable(on_handler_error)
@@ -653,8 +657,33 @@ class StreamClient(EnumEnforcer):
     async def _service_op(self, symbols, service, command, field_type=None,
                           *, fields=None):
         async with self._subscription_locks[service]:
-            await self._service_op_locked(
+            await self._service_chunks_locked(
                 symbols, service, command, field_type, fields=fields)
+
+    async def _service_chunks_locked(self, symbols, service, command, field_type,
+                                     *, fields=None, converted=False, record=True):
+        if self._socket is None:
+            raise ValueError('Socket not open. Did you forget to call login()?')
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        else:
+            symbols = list(symbols)
+        if any(not isinstance(s, str) for s in symbols):
+            raise ValueError('symbols must be nonempty strings')
+        symbols = [part for symbol in symbols for part in symbol.split(',')]
+        if not symbols:
+            raise ValueError('symbols must not be empty')
+        if any(not s.strip() for s in symbols):
+            raise ValueError('symbols must be nonempty strings')
+        symbols = list(dict.fromkeys(symbols))
+        if fields is not None and not isinstance(fields, (str, Enum)):
+            fields = tuple(fields)
+        for offset in range(0, len(symbols), self._max_symbols_per_request):
+            chunk = symbols[offset:offset + self._max_symbols_per_request]
+            chunk_command = 'ADD' if command == 'SUBS' and offset else command
+            await self._service_op_locked(
+                chunk, service, chunk_command, field_type, fields=fields,
+                converted=converted, record=record)
 
     async def _service_op_locked(self, symbols, service, command, field_type=None,
                                  *, fields=None, converted=False, record=True):
@@ -734,7 +763,7 @@ class StreamClient(EnumEnforcer):
                         symbol = self._stream_correl_id
                     groups.setdefault(spec, []).append(symbol)
                 for index, ((field_type, fields), symbols) in enumerate(groups.items()):
-                    await self._service_op_locked(
+                    await self._service_chunks_locked(
                         symbols, service, 'SUBS' if index == 0 else 'ADD',
                         field_type, fields=fields, converted=True, record=False)
 
