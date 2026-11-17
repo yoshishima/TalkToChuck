@@ -160,10 +160,11 @@ orders easy:
 
 .. code-block:: python
 
-  from schwab.orders.common import OrderType
-  from schwab.orders.generic import OrderBuilder
+  from schwab.orders.common import (
+      OrderType, first_triggers_second, one_cancels_other)
+  from schwab.orders.equities import equity_buy_limit, equity_sell_limit
 
-  one_triggers_other(
+  first_triggers_second(
       equity_buy_limit('GOOG', 1, 1310),
       one_cancels_other(
           equity_sell_limit('GOOG', 1, 1400),

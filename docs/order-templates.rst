@@ -208,29 +208,26 @@ expect all their parameters to be of type ``OrderBuilder``. You can construct
 these orders using the templates above or by 
 :ref:`creating them from scratch <order_builder>`.
 
-Note that you do **not** construct composite orders by placing the constituent 
-orders and then passing the results to the utility methods: 
+Create the constituent builders without submitting them, combine them, and
+submit the composite order once. For example, this creates an entry order that
+triggers an exit order:
+
+.. _composite_order_example:
 
 .. code-block:: python
 
-  order_one = c.place_order(config.account_id, 
-                    option_buy_to_open_limit(trade_symbol, contracts, safety_ask)
-                    .set_duration(Duration.GOOD_TILL_CANCEL)
-                    .set_session(Session.NORMAL)
-                    .build())
+  from schwab.orders.common import first_triggers_second
+  from schwab.orders.equities import equity_buy_limit, equity_sell_limit
 
-  order_two = c.place_order(config.account_id, 
-                    option_sell_to_close_limit(trade_symbol, half, double)
-                    .set_duration(Duration.GOOD_TILL_CANCEL)
-                    .set_session(Session.NORMAL)
-                    .build())
+  # Assume client and account_hash are already configured.
+  entry = equity_buy_limit('AAPL', 1, '100.00')
+  exit_order = equity_sell_limit('AAPL', 1, '110.00')
+  composite = first_triggers_second(entry, exit_order)
+  response = client.place_order(account_hash, composite)
 
-  # THIS IS BAD, DO NOT DO THIS
-  exec_trade =  c.place_order(config.account_id, first_triggers_second(order_one, order_two))
-
-What's happening here is both constituent orders are being executed, and then 
-``place_order`` will fail. Creating an ``OrderBuilder`` defers their execution, 
-subject to your composite order rules. 
+Creating and combining builders does not submit an order. Calling
+``place_order`` on each constituent separately would submit separate orders;
+it would not create the intended composite strategy.
 
 .. autofunction:: schwab.orders.common.one_cancels_other
 .. autofunction:: schwab.orders.common.first_triggers_second

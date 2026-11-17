@@ -3,8 +3,36 @@ from schwab.orders.common import *
 from schwab.orders.generic import OrderBuilder
 
 import unittest
+from pathlib import Path
+from unittest.mock import Mock
 
 class MultiOrderTest(unittest.TestCase):
+
+    def test_documented_composite_example_submits_once(self):
+        docs = (Path(__file__).resolve().parents[2] /
+                'docs' / 'order-templates.rst').read_text(encoding='utf-8')
+        example = docs.split('.. _composite_order_example:', 1)[1]
+        example = example.split('.. code-block:: python', 1)[1]
+        lines = example.lstrip('\n').splitlines()
+        code = []
+        for line in lines:
+            if line and not line.startswith('  '):
+                break
+            code.append(line[2:] if line.startswith('  ') else '')
+
+        client = Mock()
+        exec('\n'.join(code), {'client': client, 'account_hash': 'hash'})
+
+        client.place_order.assert_called_once()
+        account, order = client.place_order.call_args.args
+        self.assertEqual(account, 'hash')
+        built = order.build()
+        self.assertEqual(built['orderStrategyType'], 'TRIGGER')
+        self.assertEqual(len(built['childOrderStrategies']), 1)
+        self.assertEqual(built['orderLegCollection'][0]['instruction'], 'BUY')
+        self.assertEqual(
+            built['childOrderStrategies'][0]['orderLegCollection'][0]
+                 ['instruction'], 'SELL')
 
     def test_trigger_can_reuse_first_order(self):
         entry = OrderBuilder().set_order_strategy_type(OrderStrategyType.SINGLE)
