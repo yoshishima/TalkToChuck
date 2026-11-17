@@ -719,6 +719,7 @@ class BaseClient(EnumEnforcer, ABC):
 
     class Quote:
         class Fields(Enum):
+            ALL = 'all'
             QUOTE = 'quote'
             FUNDAMENTAL = 'fundamental'
             EXTENDED = 'extended'

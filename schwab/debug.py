@@ -502,7 +502,7 @@ def enable_bug_report_logging():
 
 
 def _enable_bug_report_logging(
-        output=sys.stderr, loggers=None,
+        output=None, loggers=None,
         max_log_messages=_DEFAULT_MAX_LOG_MESSAGES,
         max_log_chars=_DEFAULT_MAX_LOG_CHARS):
     '''
@@ -567,19 +567,20 @@ def _enable_bug_report_logging(
                 logger.removeHandler(handler)
                 logger.setLevel(logger_levels[logger])
 
-            if getattr(output, 'closed', False):
+            stream = sys.stderr if output is None else output
+            if stream is None or getattr(stream, 'closed', False):
                 return
 
-            print(file=output)
-            print(' ### BEGIN REDACTED LOGS ###', file=output)
-            print(file=output)
+            print(file=stream)
+            print(' ### BEGIN REDACTED LOGS ###', file=stream)
+            print(file=stream)
 
             if handler.dropped_messages:
                 print('<{} older log messages omitted>'.format(
-                        handler.dropped_messages), file=output)
+                        handler.dropped_messages), file=stream)
             for msg in handler.messages:
                 msg = schwab.LOG_REDACTOR.redact(msg)
-                print(msg, file=output)
+                print(msg, file=stream)
         except BrokenPipeError:
             # Bug-report output is best-effort, especially from an atexit
             # callback whose output may be connected to a closed pipe.

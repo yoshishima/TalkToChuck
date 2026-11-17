@@ -771,6 +771,12 @@ class _TestClient:
             self.make_url('/marketdata/v1/{symbol}/quotes'),
             params={'fields': 'quote'})
 
+    def test_get_quote_fields_all(self):
+        self.client.get_quote(SYMBOL, fields=self.client.Quote.Fields.ALL)
+        self.mock_session.get.assert_called_once_with(
+            self.make_url('/marketdata/v1/{symbol}/quotes'),
+            params={'fields': 'all'})
+
 
     def test_get_quote_fields_unchecked(self):
         self.client.set_enforce_enums(False)
@@ -812,6 +818,14 @@ class _TestClient:
             self.make_url('/marketdata/v1/quotes'), params={
                 'symbols': 'AAPL,MSFT',
                 'fields': 'quote'})
+
+    def test_get_quotes_fields_all(self):
+        self.client.get_quotes(
+                ['AAPL', 'MSFT'], fields=self.client.Quote.Fields.ALL)
+        self.mock_session.get.assert_called_once_with(
+            self.make_url('/marketdata/v1/quotes'), params={
+                'symbols': 'AAPL,MSFT',
+                'fields': 'all'})
 
 
     def test_get_quotes_fields_unchecked(self):

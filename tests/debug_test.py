@@ -310,6 +310,22 @@ class EnableDebugLoggingTest(unittest.TestCase):
         write_logs()
 
     @no_duplicates
+    def test_log_writer_uses_current_default_stderr(self):
+        original = io.StringIO()
+        replacement = io.StringIO()
+        logger = logging.getLogger('current-stderr-log-test')
+        with patch('sys.stderr', original):
+            write_logs = schwab.debug._enable_bug_report_logging(
+                    loggers=[logger])
+            logger.info('message')
+        original.close()
+
+        with patch('sys.stderr', replacement):
+            write_logs()
+
+        self.assertIn('message', replacement.getvalue())
+
+    @no_duplicates
     def test_log_writer_tolerates_broken_pipe(self):
         class BrokenPipeOutput(io.StringIO):
             def write(self, value):
