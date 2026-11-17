@@ -498,13 +498,17 @@ class BaseClient(EnumEnforcer, ABC):
         '''Orders for a specific account. Optionally specify a single status on 
         which to filter.
 
+        A `published copy of Schwab's API specification
+        <https://github.com/major/schwab-rs/blob/main/docs/trader_api.openapi.json>`__
+        describes a maximum date range of one year between the requested start
+        and end times. This client does not validate that range; Schwab
+        determines which history is available and whether a request is accepted.
+
         :param max_results: The maximum number of orders to retrieve. The API
                             defaults to 3,000.
         :param from_entered_datetime: Specifies that no orders entered before
-                                      this time should be returned. Date must
-                                      be within one year of today's date.
-                                      Defaults to 365 days before the current
-                                      time.
+                                      this time should be returned. Defaults
+                                      to 365 days before the current time.
         :param to_entered_datetime: Specifies that no orders entered after this
                                     time should be returned. Defaults to the
                                     current time.
@@ -529,13 +533,20 @@ class BaseClient(EnumEnforcer, ABC):
         '''Orders for all linked accounts. Optionally specify a single status on 
         which to filter.
 
+        A `published copy of Schwab's API specification
+        <https://github.com/major/schwab-rs/blob/main/docs/trader_api.openapi.json>`__
+        describes a 60-day lookback from today's date for the start time on
+        this endpoint. That lookback is distinct from the maximum span between
+        start and end times; the specification does not give a separate maximum
+        span for this endpoint.
+        This client does not validate the dates, and Schwab determines which
+        history is available and whether a request is accepted.
+
         :param max_results: The maximum number of orders to retrieve. The API
                             defaults to 3,000.
         :param from_entered_datetime: Specifies that no orders entered before
-                                      this time should be returned. Date must
-                                      be within 60 days from today's date.
-                                      Defaults to 60 days before the current
-                                      time.
+                                      this time should be returned. Defaults
+                                      to 60 days before the current time.
         :param to_entered_datetime: Specifies that no orders entered after this
                                     time should be returned. Defaults to the
                                     current time.
