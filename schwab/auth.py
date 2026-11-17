@@ -511,6 +511,9 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     refresh the token as necessary, writing each updated version to 
     ``token_path``.
 
+    If the browser cannot be opened, open the printed authorization URL
+    manually on the same machine while this function waits for the callback.
+
     .. _callback_url_advisory:
 
     **Important Note:** This method operates by starting an HTTP server on the 
@@ -669,8 +672,16 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
             input('Press ENTER to open the browser. Note you can call ' +
                   'this method with interactive=False to skip this input.')
 
-        controller = webbrowser.get(requested_browser)
-        controller.open(auth_context.authorization_url)
+        try:
+            controller = webbrowser.get(requested_browser)
+            browser_opened = controller.open(auth_context.authorization_url)
+        except Exception:
+            browser_opened = False
+
+        if not browser_opened:
+            print('Could not open a browser automatically. Open the')
+            print('authorization URL printed above in a browser on this')
+            print('machine, then complete the login while this program waits.')
 
         # Wait for a response. A monotonic clock keeps system clock
         # adjustments from shortening or extending the wait.

@@ -33,6 +33,47 @@ class ClientFromLoginFlowTest(unittest.TestCase):
                 'creation_timestamp': TOKEN_CREATION_TIMESTAMP
         }
 
+    def test_browser_failure_preserves_manual_login_context(self):
+        callback = 'https://127.0.0.1:8182/callback'
+        received = callback + '?code=example&state=expected-state'
+        context = auth.AuthContext(
+            callback, 'https://example.com/authorize?state=expected-state',
+            'expected-state')
+
+        for failure in ('lookup', 'open', 'false'):
+            with self.subTest(failure=failure), \
+                    patch('schwab.auth.multiprocess') as processes, \
+                    patch('schwab.auth.psutil.Process'), \
+                    patch('schwab.auth._wait_for_callback_server'), \
+                    patch('schwab.auth.get_auth_context', return_value=context), \
+                    patch('schwab.auth.webbrowser.get') as browser, \
+                    patch('schwab.auth.client_from_received_url') as finish, \
+                    patch('builtins.print') as output:
+                processes.get_context.return_value = processes
+                processes.Queue.return_value.get.return_value = received
+                if failure == 'lookup':
+                    browser.side_effect = auth.webbrowser.Error('unavailable')
+                elif failure == 'open':
+                    browser.return_value.open.side_effect = OSError('failed')
+                else:
+                    browser.return_value.open.return_value = False
+
+                result = auth.client_from_login_flow(
+                    API_KEY, APP_SECRET, callback, self.token_path,
+                    token_write_func=lambda token: None, interactive=False)
+
+                self.assertIs(result, finish.return_value)
+                self.assertIs(finish.call_args.args[2], context)
+                self.assertEqual(finish.call_args.args[3], received)
+                self.assertEqual(
+                    processes.Process.call_args.kwargs['args'][-1],
+                    context.state)
+                printed = '\n'.join(' '.join(map(str, call.args))
+                                    for call in output.call_args_list)
+                self.assertIn(context.authorization_url, printed)
+                self.assertIn('Could not open a browser automatically', printed)
+                self.assertIn('authorization URL printed above', printed)
+
     @patch('schwab.auth.Client')
     @patch('schwab.auth.OAuth2Client', new_callable=MockOAuthClient)
     @patch('schwab.auth.AsyncOAuth2Client', new_callable=MockAsyncOAuthClient)
