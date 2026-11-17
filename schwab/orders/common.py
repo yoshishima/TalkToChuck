@@ -25,6 +25,15 @@ class OptionInstrument(__BaseInstrument):
 class Duration(Enum):
     '''
     Length of time over which the trade will be active.
+
+    Schwab has been `reported to reject
+    <https://github.com/alexgolec/schwab-py/issues/226>`__
+    ``IMMEDIATE_OR_CANCEL``, ``END_OF_WEEK``, ``END_OF_MONTH``, and
+    ``NEXT_END_OF_MONTH`` for equity limit orders. The report found ``DAY``,
+    ``GOOD_TILL_CANCEL``, and ``FILL_OR_KILL`` passed that particular
+    duration validation. Acceptance can depend on the instrument, order
+    details, account, and Schwab's current rules; these enum values do not
+    guarantee an order will be accepted.
     '''
     #: Cancel the trade at the end of the trading day. Note if the order cannot
     #: be filled all at once, you may see partial executions throughout the day.
