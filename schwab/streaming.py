@@ -2598,7 +2598,7 @@ class StreamClient(EnumEnforcer):
         '''
         Subscribe to Screener Equity.
 
-        :param symbols: Equity symbols to subscribe to.
+        :param symbols: Screener keys such as ``$SPX_VOLUME_5``.
         '''
         await self._service_op(symbols, 'SCREENER_EQUITY', 'SUBS', self.ScreenerFields)
 
@@ -2606,7 +2606,7 @@ class StreamClient(EnumEnforcer):
         '''
         Un-Subscribe to Screener Equity.
 
-        :param symbols: Equity symbols to unsubscribe from.
+        :param symbols: Screener keys to unsubscribe from.
         '''
         await self._service_op(symbols, 'SCREENER_EQUITY', 'UNSUBS')
 
@@ -2614,7 +2614,7 @@ class StreamClient(EnumEnforcer):
         '''
         Add symbols to the Screener Equity list.
 
-        :param symbols: Equity symbols to add to the subscription.
+        :param symbols: Screener keys to add to the subscription.
         '''
         await self._service_op(symbols, 'SCREENER_EQUITY', 'ADD', self.ScreenerFields)
 
@@ -2630,7 +2630,7 @@ class StreamClient(EnumEnforcer):
         '''
         Subscribe to Screener Option.
 
-        :param symbols: Option symbols to subscribe to.
+        :param symbols: Screener keys such as ``OPTION_CALL_VOLUME_5``.
         '''
         await self._service_op(symbols, 'SCREENER_OPTION', 'SUBS', self.ScreenerFields)
 
@@ -2638,7 +2638,7 @@ class StreamClient(EnumEnforcer):
         '''
         Un-Subscribe to Screener Option.
 
-        :param symbols: Option symbols to unsubscribe from.
+        :param symbols: Screener keys to unsubscribe from.
         '''
         await self._service_op(symbols, 'SCREENER_OPTION', 'UNSUBS')
 
@@ -2646,7 +2646,7 @@ class StreamClient(EnumEnforcer):
         '''
         Add symbols to the Screener Option list.
 
-        :param symbols: Option symbols to add to the subscription.
+        :param symbols: Screener keys to add to the subscription.
         '''
         await self._service_op(symbols, 'SCREENER_OPTION', 'ADD', self.ScreenerFields)
 

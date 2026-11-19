@@ -625,7 +625,7 @@ volume.
 Symbols in upper case and separated by commas.
 
 (PREFIX)_(SORTFIELD)_(FREQUENCY) where PREFIX is:
- * Indices: $COMPX $DJI, $SPX.X, INDEX_ALL
+ * Indices: $COMPX, $DJI, $SPX, INDEX_ALL
  * Exchanges: NYSE, NASDAQ, OTCBB, EQUITY_ALL
  * Option: OPTION_PUT, OPTION_CALL, OPTION_ALL
 
@@ -633,7 +633,11 @@ and sortField is:
  * VOLUME, TRADES, PERCENT_CHANGE_UP, PERCENT_CHANGE_DOWN, AVERAGE_PERCENT_VOLUME
 
 and frequency is:
- * 0, 1, 5, 10, 30 60 minutes (0 is for all day)
+ * 0, 1, 5, 10, 30, 60 minutes (0 is for all day)
+
+For example, ``$SPX_VOLUME_5`` requests the five-minute volume screener for
+the S&P 500. Pass the complete key to the subscription method, not an
+individual security symbol.
 
 Both the equity and option screener streams use a common set of fields:
 
