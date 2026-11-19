@@ -468,7 +468,7 @@ class PartialBookTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({'BID_PRICE': 1.0, 'TOTAL_VOLUME': 100, 'NUM_BIDS': 1},
                          bids[0])
         self.assertEqual('not-a-level', bids[1])
-        self.assertEqual({'EXCHANGE': 'EX', 'BID_VOLUME': 50, 'SEQUENCE': 9},
+        self.assertEqual({'EXCHANGE': 'EX', 'BID_VOLUME': 50, 'QUOTE_TIME_MILLIS': 9},
                          bids[2]['BIDS'][0])
         self.assertEqual('not-a-list', labeled['content'][0]['ASKS'])
         self.assertEqual('not-an-entry', labeled['content'][1])

@@ -582,6 +582,10 @@ book is called "listed." Testing indicates this stream corresponds to the NYSE
 book, but if you find any behavior that suggests otherwise please
 `let us know <https://github.com/alexgolec/schwab-api/issues>`__.
 
+For each market-maker entry, field 2 is exposed as ``QUOTE_TIME_MILLIS``.
+Earlier versions labeled this field ``SEQUENCE``. The old enum name remains an
+alias, but handler output uses the new name for both bids and asks.
+
 .. automethod:: schwab.streaming::StreamClient.nyse_book_subs
 .. automethod:: schwab.streaming::StreamClient.nyse_book_unsubs
 .. automethod:: schwab.streaming::StreamClient.nyse_book_add

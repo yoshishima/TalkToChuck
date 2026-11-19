@@ -2407,6 +2407,8 @@ class StreamClient(EnumEnforcer):
     class PerExchangeBidFields(_BaseFieldEnum):
         EXCHANGE = 0
         BID_VOLUME = 1
+        QUOTE_TIME_MILLIS = 2
+        #: Backward-compatible enum alias; handler output uses QUOTE_TIME_MILLIS.
         SEQUENCE = 2
 
     class AskFields(_BaseFieldEnum):
@@ -2418,6 +2420,8 @@ class StreamClient(EnumEnforcer):
     class PerExchangeAskFields(_BaseFieldEnum):
         EXCHANGE = 0
         ASK_VOLUME = 1
+        QUOTE_TIME_MILLIS = 2
+        #: Backward-compatible enum alias; handler output uses QUOTE_TIME_MILLIS.
         SEQUENCE = 2
 
     class _BookHandler(_Handler):
