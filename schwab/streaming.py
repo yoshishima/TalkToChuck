@@ -1346,23 +1346,23 @@ class StreamClient(EnumEnforcer):
         #: Ticker symbol
         SYMBOL = 0
 
-        #: Sequence number
-        SEQUENCE = 1
+        #: Opening price for the minute
+        OPEN_PRICE = 1
 
-        #: Today's open price
-        OPEN_PRICE = 2
+        #: Highest price for the minute
+        HIGH_PRICE = 2
 
-        #: Today's high price
-        HIGH_PRICE = 3
+        #: Lowest price for the minute
+        LOW_PRICE = 3
 
-        #: Today's low price
-        LOW_PRICE = 4
+        #: Closing price for the minute
+        CLOSE_PRICE = 4
 
-        #: Previous day's close price
-        CLOSE_PRICE = 5
+        #: Total volume for the minute
+        VOLUME = 5
 
-        #: Today's trading volume
-        VOLUME = 6
+        #: Sequence identifying the candle minute
+        SEQUENCE = 6
 
         #: Chart timestamp
         CHART_TIME_MILLIS = 7

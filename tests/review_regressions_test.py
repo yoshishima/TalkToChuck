@@ -166,7 +166,7 @@ class StreamLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.client._socket = self.socket()
         self.client._overflow_items.extend([
             {'data': [{'service': 'CHART_EQUITY', 'sequence': index,
-                       'content': [{'5': 123.45}]}]}
+                       'content': [{'4': 123.45}]}]}
             for index in range(count)])
 
     async def test_cancelled_delivery_preserves_fifo(self):
@@ -485,7 +485,7 @@ class StreamLifecycleTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(*self.client._handler_tasks)
                 self.assertEqual(seen, [123.45])
                 self.assertEqual(original, wire)
-                self.assertEqual(wire['data'][0]['content'][0]['5'], 123.45)
+                self.assertEqual(wire['data'][0]['content'][0]['4'], 123.45)
                 await self.client._close_connection()
 
 

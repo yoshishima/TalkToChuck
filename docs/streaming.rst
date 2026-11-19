@@ -300,12 +300,12 @@ labels:
     "content": [{
           "seq": 0,
           "key": "MSFT",
-          "1": 779,
-          "2": 421.65,
-          "3": 421.79,
-          "4": 421.65,
-          "5": 421.755,
-          "6": 26.0,
+          "1": 421.65,
+          "2": 421.79,
+          "3": 421.65,
+          "4": 421.755,
+          "5": 26.0,
+          "6": 779,
           "7": 1715903940000,
           "8": 19859
       }]
@@ -315,6 +315,12 @@ These labels are tricky to decode, and require a knowledge of the documentation
 to decode properly. ``schwab-api`` makes your life easier by doing this decoding 
 for you, replacing numerical labels with strings proposed by the community For 
 instance, the message above would be relabeled as:
+
+The equity chart mapping follows the current API reference: fields 1–5 are
+open, high, low, close, and volume, and field 6 is sequence. Earlier versions
+of this client used field 1 for sequence and fields 2–6 for OHLCV; consumers
+using raw field numbers or comparing historical data should account for that
+change.
 
 .. code-block:: python
 
