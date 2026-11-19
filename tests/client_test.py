@@ -607,7 +607,7 @@ class _TestClient:
 
     
     def test_preview_order(self):
-        order_spec = {'order': 'spec'}
+        order_spec = {'orderStrategy': {'orderType': 'MARKET'}}
         self.client.preview_order(ACCOUNT_HASH, order_spec)
         self.mock_session.post.assert_called_once_with(
             self.make_url('/trader/v1/accounts/{accountHash}/previewOrder'),
@@ -616,11 +616,32 @@ class _TestClient:
     
     def test_preview_order_order_builder(self):
         order_spec = OrderBuilder(enforce_enums=False).set_order_type('LIMIT')
-        expected_spec = {'orderType': 'LIMIT'}
+        expected_spec = {'orderStrategy': {'orderType': 'LIMIT'}}
         self.client.preview_order(ACCOUNT_HASH, order_spec)
         self.mock_session.post.assert_called_once_with(
             self.make_url('/trader/v1/accounts/{accountHash}/previewOrder'),
             json=expected_spec)
+
+    def test_preview_order_builder_converts_legs_and_price(self):
+        order_spec = (OrderBuilder(enforce_enums=False)
+                      .set_order_type('LIMIT')
+                      .set_complex_order_strategy_type('NONE')
+                      .set_price('6.45')
+                      .add_option_leg('BUY_TO_OPEN', 'XYZ   240315C00050000', 2))
+        self.client.preview_order(ACCOUNT_HASH, order_spec)
+        self.mock_session.post.assert_called_once_with(
+            self.make_url('/trader/v1/accounts/{accountHash}/previewOrder'),
+            json={'orderStrategy': {
+                'orderType': 'LIMIT', 'strategy': 'NONE', 'price': 6.45,
+                'orderLegs': [{'instruction': 'BUY_TO_OPEN', 'quantity': 2,
+                               'finalSymbol': 'XYZ   240315C00050000',
+                               'assetType': 'OPTION'}]}})
+
+    def test_preview_order_builder_rejects_unrepresentable_fields(self):
+        order_spec = OrderBuilder(enforce_enums=False).set_stop_price('1.00')
+        with self.assertRaisesRegex(ValueError, 'stopPrice'):
+            self.client.preview_order(ACCOUNT_HASH, order_spec)
+        self.mock_session.post.assert_not_called()
 
     
     # get_transactions

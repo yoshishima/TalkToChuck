@@ -37,6 +37,48 @@ def _path_segment(value, *, identifier=False):
     return quote(value, safe='')
 
 
+def _preview_order_from_builder(order_spec):
+    '''Translate the supported order-builder fields to the preview schema.'''
+    order = order_spec.build()
+    field_names = {
+        'session': 'session', 'duration': 'duration', 'orderType': 'orderType',
+        'complexOrderStrategyType': 'strategy', 'quantity': 'quantity',
+        'price': 'price', 'orderStrategyType': 'orderStrategyType',
+    }
+    unsupported = set(order) - set(field_names) - {'orderLegCollection'}
+    if unsupported:
+        raise ValueError('OrderBuilder fields not supported by preview schema: '
+                         + ', '.join(sorted(unsupported)))
+    strategy = {dest: order[src] for src, dest in field_names.items()
+                if src in order}
+    if 'price' in strategy:
+        try:
+            price = float(strategy['price'])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError('preview price must be a finite number') from exc
+        if not math.isfinite(price):
+            raise ValueError('preview price must be a finite number')
+        strategy['price'] = price
+    if 'orderLegCollection' in order:
+        legs = []
+        for leg in order['orderLegCollection']:
+            extra = set(leg) - {'instruction', 'instrument', 'quantity'}
+            instrument = leg.get('instrument', {})
+            extra_instrument = set(instrument) - {'assetType', 'symbol'}
+            if extra or extra_instrument:
+                raise ValueError('OrderBuilder leg has fields not supported '
+                                 'by the preview schema')
+            preview_leg = {key: leg[key] for key in ('instruction', 'quantity')
+                           if key in leg}
+            if 'symbol' in instrument:
+                preview_leg['finalSymbol'] = instrument['symbol']
+            if 'assetType' in instrument:
+                preview_leg['assetType'] = instrument['assetType']
+            legs.append(preview_leg)
+        strategy['orderLegs'] = legs
+    return {'orderStrategy': strategy}
+
+
 class _ContextualValueEnum(Enum):
     '''Enum whose distinct members can share the same API value.'''
 
@@ -607,10 +649,15 @@ class BaseClient(EnumEnforcer, ABC):
         return self._put_request(path, order_spec)
 
     def preview_order(self, account_hash, order_spec):
-        '''Preview an order, i.e. test whether an order would be accepted by the 
-        API and see the structure it would result in.'''
+        '''Preview an order without submitting it.
+
+        A dictionary is sent unchanged and should use Schwab's ``PreviewOrder``
+        schema. An :class:`OrderBuilder` is converted to that schema for the
+        supported simple-order fields. Builder fields without a corresponding
+        preview field raise ``ValueError`` rather than being silently omitted.
+        '''
         if isinstance(order_spec, OrderBuilder):
-            order_spec = order_spec.build()
+            order_spec = _preview_order_from_builder(order_spec)
 
         path = '/trader/v1/accounts/{}/previewOrder'.format(
                 _path_segment(account_hash, identifier=True))

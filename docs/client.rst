@@ -378,6 +378,15 @@ instead of creating your own order specs.
 
 .. automethod:: schwab.client.Client.place_order
 
+.. automethod:: schwab.client.Client.preview_order
+
+Preview dictionaries use Schwab's ``PreviewOrder`` shape, including an
+``orderStrategy`` object. A simple :class:`~schwab.orders.generic.OrderBuilder`
+is converted to that shape, including its legs. If it contains fields that
+the preview strategy schema cannot represent, preview raises ``ValueError``;
+pass a preview dictionary directly when finer control is needed. This changes
+the previously unwrapped request sent for an ``OrderBuilder``.
+
 If order submission times out or the connection fails after transmission, the
 order's state is unknown: Schwab may have accepted it even though no response
 was received. A timeout during an OAuth refresh can instead occur before the
