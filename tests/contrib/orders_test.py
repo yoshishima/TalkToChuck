@@ -857,6 +857,13 @@ class ConstructRepeatOrderTest(unittest.TestCase):
             ]
         }''')
 
+        exits = historical_order['childOrderStrategies'][0]['childOrderStrategies']
+        with self.assertRaisesRegex(UnrepeatableOrderError, r'\[0\].*without price'):
+            construct_repeat_order(historical_order)
+        exits[0]['price'] = 3.10
+        with self.assertRaisesRegex(UnrepeatableOrderError, r'\[1\].*without stopPrice'):
+            construct_repeat_order(historical_order)
+        exits[1]['stopPrice'] = 2.40
         repeat_order = construct_repeat_order(historical_order)
 
         self.assertBuilder({
@@ -882,6 +889,7 @@ class ConstructRepeatOrderTest(unittest.TestCase):
                     'session': 'NORMAL',
                     'duration': 'DAY',
                     'orderType': 'LIMIT',
+                    'price': 3.10,
                     'complexOrderStrategyType': 'NONE',
                     'quantity': 1.0,
                     #'destinationLinkName': 'AUTO',
@@ -898,6 +906,7 @@ class ConstructRepeatOrderTest(unittest.TestCase):
                     'session': 'NORMAL',
                     'duration': 'DAY',
                     'orderType': 'STOP',
+                    'stopPrice': 2.40,
                     'complexOrderStrategyType': 'NONE',
                     'quantity': 1.0,
                     #'destinationLinkName': 'AUTO',

@@ -82,7 +82,7 @@ def construct_repeat_order(historical_order):
     have children. Unsupported shapes raise UnrepeatableOrderError.
     '''
     try:
-        return _construct_repeat_order(historical_order)
+        return _construct_repeat_order(historical_order, 'order')
     except UnrepeatableOrderError:
         raise
     except ValueError as exc:
@@ -90,22 +90,32 @@ def construct_repeat_order(historical_order):
             'cannot repeat order: {}'.format(exc)) from exc
 
 
-def _construct_repeat_order(historical_order):
+def _construct_repeat_order(historical_order, path):
     if 'orderStrategyType' not in historical_order:
         raise ValueError('historical order is missing orderStrategyType')
     children = _validate_children(
         historical_order['orderStrategyType'],
         historical_order.get('childOrderStrategies'))
+    order_type = historical_order.get('orderType')
+    for field, types in (('price', ('LIMIT', 'STOP_LIMIT')),
+                         ('stopPrice', ('STOP', 'STOP_LIMIT'))):
+        if order_type not in types or historical_order.get(field) not in (None, ''):
+            continue
+        linked = (historical_order.get(field + 'LinkBasis') not in (None, 'MANUAL')
+                  and historical_order.get(field + 'LinkType') is not None)
+        if not linked or (field == 'stopPrice' and historical_order.get('stopPriceOffset') is None):
+            raise UnrepeatableOrderError(f'{path}: cannot repeat {order_type} without {field}')
     builder = schwab.orders.generic.OrderBuilder()
 
     # Top-level fields
     _call_setters_with_values(historical_order, builder)
 
     # Composite orders
-    for child in children:
+    for index, child in enumerate(children):
         if not isinstance(child, dict):
             raise UnrepeatableOrderError('child orders must be dictionaries')
-        builder.add_child_order_strategy(construct_repeat_order(child))
+        builder.add_child_order_strategy(_construct_repeat_order(
+            child, f'{path}.childOrderStrategies[{index}]'))
 
     # Order legs
     if 'orderLegCollection' in historical_order:
