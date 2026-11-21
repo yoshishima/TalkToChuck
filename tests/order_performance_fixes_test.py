@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import Mock, patch
 
 from schwab import auth
@@ -70,6 +71,7 @@ class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
         from authlib.integrations.httpx_client import OAuth2Client, AsyncOAuth2Client
         from authlib.integrations.base_client.errors import OAuthError
         from schwab.client import Client, AsyncClient
+        from schwab.orders.equities import equity_buy_market
 
         for asynchronous in (False, True):
             with self.subTest(asynchronous=asynchronous):
@@ -78,8 +80,18 @@ class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
                 def handle(request):
                     calls.append(str(request.url))
                     if str(request.url) == auth.TOKEN_ENDPOINT:
+                        self.assertEqual(request.method, 'POST')
+                        self.assertIn(b'grant_type=refresh_token', request.content)
                         return httpx2.Response(status[0], json={'error': 'invalid_grant'})
-                    return httpx2.Response(201)
+                    self.assertEqual((request.method, request.url.path),
+                                     ('POST', '/trader/v1/accounts/account/orders'))
+                    self.assertEqual(request.headers['Authorization'], 'Bearer old')
+                    self.assertEqual(json.loads(request.content), {
+                        'session': 'NORMAL', 'duration': 'DAY', 'orderType': 'MARKET',
+                        'orderStrategyType': 'SINGLE', 'orderLegCollection': [{
+                            'instruction': 'BUY', 'quantity': 1,
+                            'instrument': {'assetType': 'EQUITY', 'symbol': 'XYZ'}}]})
+                    return httpx2.Response(201, headers={'Location': str(request.url) + '/1'})
                 session_class = AsyncOAuth2Client if asynchronous else OAuth2Client
                 session = session_class('key', client_secret='secret',
                     token={'access_token': 'old', 'refresh_token': 'refresh',
@@ -91,7 +103,7 @@ class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
                 auth._install_refresh_fallback(session, asynchronous=asynchronous)
                 client = (AsyncClient if asynchronous else Client)('key', session)
                 async def place():
-                    result = client.place_order('account', {})
+                    result = client.place_order('account', equity_buy_market('XYZ', 1))
                     return await result if asynchronous else result
                 try:
                     self.assertEqual((await place()).status_code, 201)
@@ -153,6 +165,61 @@ class EventLoopOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/accounts/account-2/orders/order-1', session.delete.call_args.args[0])
 
 class OrderRequestPolicyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_accepted_mutation_with_lost_response_is_never_replayed(self):
+        import httpx2
+        from schwab.client import Client, AsyncClient
+        from schwab.orders.common import first_triggers_second
+        from schwab.orders.equities import equity_buy_limit, equity_sell_limit
+
+        def expected_single(side, price):
+            return {'session': 'NORMAL', 'duration': 'DAY', 'orderType': 'LIMIT',
+                    'price': price, 'orderStrategyType': 'SINGLE', 'orderLegCollection': [{
+                        'instruction': side, 'quantity': 2,
+                        'instrument': {'assetType': 'EQUITY', 'symbol': 'XYZ'}}]}
+        expected = expected_single('BUY', '10.00')
+        expected.update(orderStrategyType='TRIGGER',
+                        childOrderStrategies=[expected_single('SELL', '12.00')])
+        composite = first_triggers_second(equity_buy_limit('XYZ', 2, '10.00'),
+                                          equity_sell_limit('XYZ', 2, '12.00'))
+        collection = '/trader/v1/accounts/account/orders'
+        for asynchronous in (False, True):
+            for method in ('POST', 'PUT', 'DELETE'):
+                with self.subTest(asynchronous=asynchronous, method=method):
+                    accepted = []
+                    def handle(request):
+                        self.assertEqual(request.url.host, 'api.schwabapi.com')
+                        self.assertEqual(request.headers['Authorization'], 'Bearer synthetic')
+                        self.assertEqual(request.method, method)
+                        self.assertEqual(request.url.path, collection if method == 'POST' else collection + '/7')
+                        body = json.loads(request.content) if request.content else None
+                        self.assertEqual(body, None if method == 'DELETE' else expected)
+                        accepted.append((request.method, body))
+                        raise httpx2.ReadTimeout('response lost after acceptance', request=request)
+
+                    session_class = auth.AsyncOAuth2Client if asynchronous else auth.OAuth2Client
+                    session = session_class('key', token={'access_token': 'synthetic', 'token_type': 'Bearer'},
+                                            transport=httpx2.MockTransport(handle), trust_env=False)
+                    client = (AsyncClient if asynchronous else Client)('key', session)
+                    client.configure_get_retries(2, backoff=0)
+                    client.configure_order_requests(raise_for_status=True)
+                    try:
+                        with self.assertRaises(httpx2.ReadTimeout):
+                            if method == 'POST':
+                                call = client.place_order if asynchronous else client.async_place_order
+                                await call('account', composite)
+                            elif method == 'PUT':
+                                call = client.replace_order if asynchronous else client.async_replace_order
+                                await call('account', 7, composite)
+                            else:
+                                call = client.cancel_order if asynchronous else client.async_cancel_order
+                                await call(7, 'account')
+                        self.assertEqual(len(accepted), 1)
+                    finally:
+                        if asynchronous:
+                            await client.close_async_session()
+                        else:
+                            client.close_session()
+
     async def test_order_errors_are_opt_in_and_never_retried(self):
         import httpx2
         from unittest.mock import AsyncMock
