@@ -613,6 +613,10 @@ class StreamClient(EnumEnforcer):
                         if not self._deliver_message(self._overflow_items[0]):
                             break
                         self._overflow_items.popleft()
+                        if self._response_waiters:
+                            # recv() can finish inline for a whole socket backlog.
+                            # Let the consumer we just woke run before reading on.
+                            await asyncio.sleep(0)
 
                     if (not self._response_waiters
                             and not self._has_message_waiters()):

@@ -112,6 +112,23 @@ class StreamIsolationTest(unittest.IsolatedAsyncioTestCase):
         await client.level_one_equity_subs(['SPY'])
         self.assertEqual(3, len(client._overflow_items))
 
+    async def test_ready_consumer_runs_while_reader_seeks_ack(self):
+        frames = [json.dumps({'data': [{'service': 'ACCT_ACTIVITY', 'seq': i}]})
+                  for i in range(20)]
+        client, socket = self.make_client(frames, max_pending_messages=4)
+        seen = []
+        def on_message(message):
+            seen.append((message['seq'], socket.recv.await_count))
+        client.add_account_activity_handler(on_message)
+        async def consume():
+            for _ in frames:
+                await client.handle_message()
+        await asyncio.wait_for(asyncio.gather(
+            consume(), client.level_one_equity_subs(['SYN'])), timeout=2)
+        self.assertEqual(list(range(len(frames))), [seq for seq, _ in seen])
+        self.assertEqual(1, seen[0][1])
+        self.assertEqual(len(frames) + 1, socket.recv.await_count)
+
     async def test_invalid_capacity(self):
         for value in (0, -1, True, 1.5, None):
             with self.assertRaises(ValueError):
