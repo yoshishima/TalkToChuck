@@ -11,10 +11,13 @@ import re
 import sys
 import threading
 from urllib.parse import urlsplit
+from httpx2 import ResponseNotRead
 import schwab
 
 
-_BUG_REPORT_LOGGING_ACTIVE = 0
+_DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024
+_CAPTURE_RESPONSE_LIMITS = {}
+_CAPTURE_LOCK = threading.Lock()
 _DEFAULT_MAX_TRANSIENT_REDACTIONS = 10_000
 _DEFAULT_MAX_PERSISTENT_PER_LABEL = 32
 _DEFAULT_MAX_LOG_MESSAGES = 10_000
@@ -386,12 +389,24 @@ def register_redactions_from_response(resp, *, return_sanitized=False):
     the sanitized JSON text (or an omission marker for non-JSON responses).
     Return None when capture is disabled and False when its limit is reached.
     '''
-    if not _BUG_REPORT_LOGGING_ACTIVE:
+    with _CAPTURE_LOCK:
+        byte_limit = min(_CAPTURE_RESPONSE_LIMITS.values(), default=None)
+    if byte_limit is None:
         return None
     if schwab.LOG_REDACTOR.transient_limit_reached:
         return False
 
     try:
+        # HTTP clients have already buffered ordinary responses. Measure the
+        # actual decompressed bytes; headers can be missing or describe wire size.
+        try:
+            content = resp.content
+        except (AttributeError, ResponseNotRead):
+            return '<unbuffered response body omitted>' if return_sanitized else True
+        if not isinstance(content, bytes):
+            return '<unbuffered response body omitted>' if return_sanitized else True
+        if byte_limit == 0 or len(content) > byte_limit:
+            return '<response body omitted: capture size limit>' if return_sanitized else True
         payload = resp.json()
         if inspect.isawaitable(payload):
             close = getattr(payload, 'close', None)
@@ -491,10 +506,13 @@ def _is_sensitive_name(name, bad_patterns, whitelisted):
     return False
 
 
-def enable_bug_report_logging():
+def enable_bug_report_logging(*, max_response_bytes=_DEFAULT_MAX_RESPONSE_BYTES):
     '''
     Turns on bug report logging. Will collect all logged output, redact out
     anything that should be kept secret, and emit the result at program exit.
+
+    :param max_response_bytes: Maximum buffered HTTP body size to parse and
+        redact for capture. Defaults to 32 KiB. Zero captures metadata only.
 
     Notes:
      * This method does a best effort redaction. Never share its output
@@ -505,17 +523,20 @@ def enable_bug_report_logging():
        discarded and response bodies that cannot be safely redacted are
        omitted.
     '''
-    _enable_bug_report_logging()
+    _enable_bug_report_logging(max_response_bytes=max_response_bytes)
 
 
 def _enable_bug_report_logging(
         output=None, loggers=None,
         max_log_messages=_DEFAULT_MAX_LOG_MESSAGES,
-        max_log_chars=_DEFAULT_MAX_LOG_CHARS):
+        max_log_chars=_DEFAULT_MAX_LOG_CHARS,
+        max_response_bytes=_DEFAULT_MAX_RESPONSE_BYTES):
     '''
     Module-internal version of :func:`enable_bug_report_logging`, intended for
     use in tests.
     '''
+    if type(max_response_bytes) is not int or max_response_bytes < 0:
+        raise ValueError('max_response_bytes must be a nonnegative integer')
     if loggers is None:
         loggers = (
             schwab.auth.get_logger(),
@@ -558,8 +579,8 @@ def _enable_bug_report_logging(
         logger.setLevel(logging.DEBUG)
         logger.addHandler(handler)
 
-    global _BUG_REPORT_LOGGING_ACTIVE
-    _BUG_REPORT_LOGGING_ACTIVE += 1
+    with _CAPTURE_LOCK:
+        _CAPTURE_RESPONSE_LIMITS[handler] = max_response_bytes
 
     logs_written = False
 
@@ -593,10 +614,10 @@ def _enable_bug_report_logging(
             # callback whose output may be connected to a closed pipe.
             pass
         finally:
-            global _BUG_REPORT_LOGGING_ACTIVE
-            _BUG_REPORT_LOGGING_ACTIVE -= 1
-            if not _BUG_REPORT_LOGGING_ACTIVE:
-                schwab.LOG_REDACTOR.clear_transient()
+            with _CAPTURE_LOCK:
+                del _CAPTURE_RESPONSE_LIMITS[handler]
+                if not _CAPTURE_RESPONSE_LIMITS:
+                    schwab.LOG_REDACTOR.clear_transient()
     atexit.register(write_logs)
 
     get_logger().debug('schwab-api version %s', schwab.__version__)

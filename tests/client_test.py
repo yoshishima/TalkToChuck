@@ -191,7 +191,8 @@ class _TestClient:
         response.json.return_value = {'accountNumber': '123456789'}
         self.mock_session.get.return_value = response
 
-        with patch('schwab.debug._BUG_REPORT_LOGGING_ACTIVE', 1):
+        response.content = response.text.encode()
+        with patch('schwab.debug._CAPTURE_RESPONSE_LIMITS', {None: 1024}):
             self.client.get_account_numbers()
 
         response.json.assert_called_once_with()
@@ -205,7 +206,7 @@ class _TestClient:
         type(response).text = response_text
         self.mock_session.get.return_value = response
 
-        with patch('schwab.debug._BUG_REPORT_LOGGING_ACTIVE', 0):
+        with patch('schwab.debug._CAPTURE_RESPONSE_LIMITS', {}):
             self.client.get_account_numbers()
 
         response.json.assert_not_called()
@@ -219,9 +220,10 @@ class _TestClient:
         response.json.return_value = {'orderId': '123'}
         self.mock_session.get.return_value = response
 
+        response.content = b'{"orderId":"123"}'
         limited_redactor = schwab.debug.LogRedactor(max_transient_entries=0)
         with patch.object(schwab, 'LOG_REDACTOR', limited_redactor), \
-                patch('schwab.debug._BUG_REPORT_LOGGING_ACTIVE', 1):
+                patch('schwab.debug._CAPTURE_RESPONSE_LIMITS', {None: 1024}):
             self.client.get_account_numbers()
 
         response.json.assert_called_once_with()

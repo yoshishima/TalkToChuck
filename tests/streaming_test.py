@@ -6357,7 +6357,7 @@ class StreamClientTest(IsolatedAsyncioTestCase):
     async def test_login_debug_logs_redact_credentials_before_root_handler(
             self, ws_connect):
         with patch.object(schwab, 'LOG_REDACTOR', schwab.debug.LogRedactor()), \
-                patch('schwab.debug._BUG_REPORT_LOGGING_ACTIVE', 0), \
+                patch('schwab.debug._CAPTURE_RESPONSE_LIMITS', {}), \
                 self.assertLogs(level='DEBUG') as logs:
             await self.login_and_get_socket(ws_connect)
         output = '\n'.join(logs.output)

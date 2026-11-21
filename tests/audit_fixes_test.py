@@ -127,7 +127,8 @@ class LoggingNeverRaisesTest(unittest.IsolatedAsyncioTestCase):
         coroutine = body()
         response = Mock()
         response.json.return_value = coroutine
-        with patch.object(debug, '_BUG_REPORT_LOGGING_ACTIVE', 1):
+        response.content = b'{}'
+        with patch.object(debug, '_CAPTURE_RESPONSE_LIMITS', {None: 1024}):
             self.assertEqual('<response body omitted>',
                              debug.register_redactions_from_response(
                                  response, return_sanitized=True))

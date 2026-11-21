@@ -111,7 +111,7 @@ class OrdinaryLoggingTest(unittest.TestCase):
             'accountNumber': 'private-account',
             'currentBalances': {'cashBalance': 987654.32},
         }, 200)
-        with patch('schwab.debug._BUG_REPORT_LOGGING_ACTIVE', 0), \
+        with patch('schwab.debug._CAPTURE_RESPONSE_LIMITS', {}), \
                 patch.object(client.logger, 'level', logging.DEBUG), \
                 self.assertLogs(level='DEBUG') as logs:
             client._log_response(response, 1)
@@ -283,10 +283,45 @@ class RegisterRedactionsTest(unittest.TestCase):
 
 class EnableDebugLoggingTest(unittest.TestCase):
 
+    def test_large_body_is_omitted_before_parsing_or_logging(self):
+        client = Client('synthetic', Mock())
+        response = MockResponse({'accountNumber': 'private-account'}, 200,
+                                headers={'Content-Length': '1'})
+        output = io.StringIO()
+        finish = schwab.debug._enable_bug_report_logging(
+            output=output, loggers=[client.logger], max_response_bytes=16)
+        try:
+            with patch.object(response, 'json') as parse:
+                client._log_response(response, 1)
+            parse.assert_not_called()
+        finally:
+            finish()
+        self.assertIn('capture size limit', output.getvalue())
+        self.assertNotIn('private-account', output.getvalue())
+
+    def test_smallest_active_capture_limit_and_exact_boundary(self):
+        response = MockResponse({'message': 'ok'}, 200)
+        finish = schwab.debug._enable_bug_report_logging(
+            output=io.StringIO(), loggers=[], max_response_bytes=len(response.content))
+        try:
+            finish_metadata = schwab.debug._enable_bug_report_logging(
+                output=io.StringIO(), loggers=[], max_response_bytes=0)
+            try:
+                with patch.object(response, 'json') as parse:
+                    status = schwab.debug.register_redactions_from_response(response, return_sanitized=True)
+                    self.assertIn('omitted', status)
+                    parse.assert_not_called()
+            finally:
+                finish_metadata()
+            result = schwab.debug.register_redactions_from_response(response, return_sanitized=True)
+            self.assertEqual({'message': 'ok'}, json.loads(result))
+        finally:
+            finish()
+
     @patch('schwab.debug._enable_bug_report_logging')
     def test_enable_doesnt_throw_exceptions(self, enable):
         schwab.debug.enable_bug_report_logging()
-        enable.assert_called_once_with()
+        enable.assert_called_once_with(max_response_bytes=32 * 1024)
 
     @no_duplicates
     def test_log_writer_is_idempotent(self):

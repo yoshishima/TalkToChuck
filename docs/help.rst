@@ -130,7 +130,10 @@ console when the program exits. You can enable this by calling this method
 
   schwab.debug.enable_bug_report_logging()
 
-Bug-report logging opts into HTTP response bodies. JSON bodies are sanitized
+Bug-report logging captures buffered HTTP bodies up to 32 KiB. Larger responses
+produce a size-limit marker before JSON parsing. Set ``max_response_bytes``
+when enabling capture to adjust the limit, or use zero for response metadata
+only. Overlapping captures use the smallest active limit. JSON bodies are sanitized
 before reaching either the bug-report recorder or ordinary application handlers;
 non-JSON bodies are omitted. Financial details that are not recognized as secret
 fields can remain in these explicitly enabled diagnostics.
