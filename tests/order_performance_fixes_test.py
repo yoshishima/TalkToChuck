@@ -176,6 +176,40 @@ class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
                         client.close_session()
 
 class EventLoopOrderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_paced_orders_leave_default_executor_available(self):
+        import asyncio
+        import contextvars
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        import httpx2
+        from schwab.client import Client
+
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        started, release = asyncio.Event(), threading.Event()
+        marker = contextvars.ContextVar('order_marker')
+        marker.set('synthetic')
+        def post(*args, **kwargs):
+            self.assertEqual(marker.get(), 'synthetic')
+            loop.call_soon_threadsafe(started.set)
+            self.assertTrue(release.wait(3))
+            return httpx2.Response(201)
+        session = Mock()
+        session.post.side_effect = post
+        client = Client('synthetic', session)
+        client.configure_order_requests(min_interval=.01)
+        task = asyncio.create_task(client.async_place_order('account', {}))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            await asyncio.wait_for(asyncio.to_thread(lambda: None), 1)
+            self.assertFalse(task.done())
+        finally:
+            release.set()
+            await task
+            await asyncio.to_thread(client.close_session)
+        session.post.assert_called_once()
+        session.close.assert_called_once()
+
     async def test_sync_client_warns_when_called_on_event_loop(self):
         import httpx2
         from schwab.client import Client

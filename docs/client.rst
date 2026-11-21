@@ -247,7 +247,11 @@ applications. When using an existing synchronous client, its
 ``async_place_order()``, ``async_replace_order()``, and ``async_cancel_order()``
 methods run the corresponding operation in a worker thread; other calls can use
 ``asyncio.to_thread``. The session and custom token callbacks must be safe to
-use from that thread. Once the worker has started, it can send an order even
+use from that thread. When order pacing is enabled, these wrappers use a
+client-owned thread pool. Closing the synchronous client waits for its submitted
+pool work to finish before closing the HTTP session. In an async application,
+use ``await asyncio.to_thread(client.close_session)`` to keep the loop responsive.
+Once the worker has started, it can send an order even
 after the awaiting task is canceled, including when it was still waiting for
 the order pacing interval. To retrieve the eventual response after a caller
 timeout, keep a reference to the order task and use

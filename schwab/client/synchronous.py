@@ -1,5 +1,7 @@
 from .base import BaseClient
 import asyncio
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 import time
 import threading
 import warnings
@@ -14,6 +16,8 @@ class Client(BaseClient):
         self._refresh_stop = threading.Event()
         self._refresh_thread = None
         self._order_throttle_lock = threading.Lock()
+        # Threads are started on demand, only for paced async order wrappers.
+        self._paced_order_workers = ThreadPoolExecutor(thread_name_prefix='schwab-paced-order')
 
     def start_token_refresh(self):
         '''Start an optional background token refresh worker for this client.'''
@@ -50,6 +54,7 @@ class Client(BaseClient):
         '''Close the underlying HTTP session and its connection pool. The
         synchronous counterpart of :meth:`AsyncClient.close_async_session`.'''
         self.stop_token_refresh()
+        self._paced_order_workers.shutdown(wait=True)
         self.session.close()
 
     @staticmethod
@@ -62,18 +67,24 @@ class Client(BaseClient):
             'A synchronous Schwab client blocks the event loop; use AsyncClient '
             'or run the call in a worker thread.', RuntimeWarning, stacklevel=4)
 
+    async def _offload_order(self, operation, *args):
+        if not self._order_min_interval:
+            return await asyncio.to_thread(operation, *args)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._paced_order_workers, contextvars.copy_context().run, operation, *args)
+
     async def async_place_order(self, account_hash, order_spec):
         '''Run place_order in a worker thread without blocking the event loop.'''
-        return await asyncio.to_thread(self.place_order, account_hash, order_spec)
+        return await self._offload_order(self.place_order, account_hash, order_spec)
 
     async def async_replace_order(self, account_hash, order_id, order_spec):
         '''Run replace_order in a worker thread without blocking the event loop.'''
-        return await asyncio.to_thread(self.replace_order, account_hash, order_id,
-                                       order_spec)
+        return await self._offload_order(self.replace_order, account_hash, order_id, order_spec)
 
     async def async_cancel_order(self, order_id, account_hash):
         '''Run cancel_order in a worker thread without blocking the event loop.'''
-        return await asyncio.to_thread(self.cancel_order, order_id, account_hash)
+        return await self._offload_order(self.cancel_order, order_id, account_hash)
 
     def _throttle_order(self, path):
         if not self._is_order_mutation(path) or not self._order_min_interval:
