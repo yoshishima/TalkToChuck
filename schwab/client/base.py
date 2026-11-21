@@ -3,6 +3,7 @@ completely unopinionated, and provides an easy-to-use wrapper around the Schwab
 HTTP API.'''
 
 from abc import ABC, abstractmethod
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 
 import datetime
@@ -53,11 +54,14 @@ def _preview_order_from_builder(order_spec):
                 if src in order}
     if 'price' in strategy:
         try:
-            price = float(strategy['price'])
-        except (TypeError, ValueError, OverflowError) as exc:
+            exact_price = Decimal(str(strategy['price']))
+            price = float(exact_price)
+        except (InvalidOperation, TypeError, ValueError, OverflowError) as exc:
             raise ValueError('preview price must be a finite number') from exc
         if not math.isfinite(price):
             raise ValueError('preview price must be a finite number')
+        if Decimal(str(price)) != exact_price:
+            raise ValueError('preview price cannot be represented without loss of precision')
         strategy['price'] = price
     if 'orderLegCollection' in order:
         legs = []

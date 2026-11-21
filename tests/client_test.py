@@ -653,6 +653,12 @@ class _TestClient:
             self.client.preview_order(ACCOUNT_HASH, order_spec)
         self.mock_session.post.assert_not_called()
 
+    def test_preview_refuses_to_change_an_exact_price(self):
+        for price in ('1.0000000000000001', '1e-400'):
+            with self.subTest(price=price), self.assertRaisesRegex(ValueError, 'precision'):
+                self.client.preview_order(ACCOUNT_HASH, OrderBuilder().copy_price(price))
+        self.mock_session.post.assert_not_called()
+
     
     # get_transactions
 
