@@ -155,6 +155,40 @@ class EventLoopOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await asyncio.wait_for(task, 1)).status_code, 201)
         session.post.assert_called_once()
 
+    async def test_cancelled_waiter_can_still_submit_after_pacing(self):
+        import asyncio
+        import threading
+        import httpx2
+        from schwab.client import Client
+        from schwab.orders.equities import equity_buy_market
+
+        waiting, submitted = threading.Event(), threading.Event()
+        session = Mock()
+        def post(*args, **kwargs):
+            submitted.set()
+            return httpx2.Response(201)
+        session.post.side_effect = post
+
+        client = Client('key', session)
+        client.configure_order_requests(min_interval=0.01)
+        throttle = client._throttle_order
+        def enter_throttle(path):
+            waiting.set()
+            throttle(path)
+
+        with patch.object(client, '_throttle_order', side_effect=enter_throttle):
+            with client._order_throttle_lock:
+                order = equity_buy_market('XYZ', 1)
+                task = asyncio.create_task(client.async_place_order('account', order))
+                self.assertTrue(await asyncio.to_thread(waiting.wait, 2))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                session.post.assert_not_called()
+            self.assertTrue(await asyncio.to_thread(submitted.wait, 2))
+        session.post.assert_called_once_with(
+            'https://api.schwabapi.com/trader/v1/accounts/account/orders', json=order.build())
+
     async def test_threaded_cancel_preserves_order_id_and_account_arguments(self):
         import httpx2
         from schwab.client import Client
