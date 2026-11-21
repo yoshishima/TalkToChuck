@@ -508,6 +508,8 @@ when exact boundaries or a market-local day are needed. Datetime values are
 converted to UTC without advancing the end bound. Naive datetimes mean UTC and,
 as for price history, emit a ``UserWarning``: a naive local time would shift
 the query window by the local UTC offset.
+Order queries raise ``ValueError`` if the resulting start is later than the end,
+including when one of the bounds comes from the default lookback.
 
 ++++++++++++++++++++++++++++++
 Contextual price-history enums

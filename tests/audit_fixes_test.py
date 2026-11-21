@@ -752,7 +752,7 @@ class NaiveDatetimeWarningTest(unittest.TestCase):
             lambda: client.get_orders_for_account(
                 'SYNTHHASH', from_entered_datetime=naive),
             lambda: client.get_orders_for_all_linked_accounts(
-                to_entered_datetime=naive),
+                from_entered_datetime=naive.date(), to_entered_datetime=naive),
             lambda: client.get_transactions('SYNTHHASH', start_date=naive),
         )
         for call in calls:

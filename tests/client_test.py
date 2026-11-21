@@ -344,6 +344,16 @@ class _TestClient:
     # get_orders_for_account
 
     @patch('schwab.client.base.datetime.datetime', mockdatetime)
+    def test_inverted_order_history_window_does_not_send(self):
+        for query in (lambda **kw: self.client.get_orders_for_account(ACCOUNT_HASH, **kw),
+                      self.client.get_orders_for_all_linked_accounts):
+            for bounds in ({'from_entered_datetime': datetime.date(2021, 1, 1)},
+                           {'to_entered_datetime': datetime.date(2018, 1, 1)}):
+                with self.subTest(bounds=bounds), self.assertRaisesRegex(ValueError, 'at or before'):
+                    query(**bounds)
+        self.mock_session.get.assert_not_called()
+
+    @patch('schwab.client.base.datetime.datetime', mockdatetime)
     def test_get_orders_for_account_vanilla(self):
         self.client.get_orders_for_account(ACCOUNT_HASH)
         self.mock_session.get.assert_called_once_with(
@@ -390,10 +400,10 @@ class _TestClient:
     def test_get_orders_for_account_from_entered_datetime(self):
         self.client.get_orders_for_account(
                 ACCOUNT_HASH, from_entered_datetime=datetime.datetime(
-                    year=2024, month=6, day=5, hour=4, minute=3, second=2))
+                    year=2019, month=12, day=5, hour=4, minute=3, second=2))
         self.mock_session.get.assert_called_once_with(
             self.make_url('/trader/v1/accounts/{accountHash}/orders'), params={
-                'fromEnteredTime': '2024-06-05T04:03:02.000Z',
+                'fromEnteredTime': '2019-12-05T04:03:02.000Z',
                 'toEnteredTime': NOW_DATETIME_ISO,
             })
 
@@ -495,10 +505,10 @@ class _TestClient:
     def test_get_orders_for_all_linked_accounts_from_entered_datetime(self):
         self.client.get_orders_for_all_linked_accounts(
                 from_entered_datetime=datetime.datetime(
-                    year=2024, month=6, day=5, hour=4, minute=3, second=2))
+                    year=2019, month=12, day=5, hour=4, minute=3, second=2))
         self.mock_session.get.assert_called_once_with(
             self.make_url('/trader/v1/orders'), params={
-                'fromEnteredTime': '2024-06-05T04:03:02.000Z',
+                'fromEnteredTime': '2019-12-05T04:03:02.000Z',
                 'toEnteredTime': NOW_DATETIME_ISO,
             })
 
