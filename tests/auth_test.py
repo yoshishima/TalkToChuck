@@ -24,6 +24,58 @@ CALLBACK_URL = 'https://redirect.url.com'
 
 class ClientFromLoginFlowTest(unittest.TestCase):
 
+    def test_delayed_callback_after_browser_failure_exchanges_code_once(self):
+        import queue
+        from urllib.parse import parse_qs
+        from unittest.mock import Mock
+
+        callback = 'https://127.0.0.1:8182/callback'
+        context = auth.AuthContext(callback, 'https://example.invalid/authorize', 'expected')
+        received = queue.Queue()
+        apps = []
+        writer = Mock()
+        requests_seen = []
+        oauth_class = auth.OAuth2Client
+
+        def exchange(request):
+            self.assertEqual((request.method, str(request.url)), ('POST', auth.TOKEN_ENDPOINT))
+            requests_seen.append(parse_qs(request.content.decode())['code'])
+            return auth.httpx.Response(200, json={'access_token': 'synthetic', 'token_type': 'Bearer'})
+
+        def oauth(*args, **kwargs):
+            return oauth_class(*args, **kwargs, trust_env=False, transport=auth.httpx.MockTransport(exchange))
+
+        with patch('schwab.auth.multiprocess') as processes, patch('schwab.auth.psutil.Process'), \
+                patch('schwab.auth._wait_for_callback_server'), patch('builtins.print'), \
+                patch('schwab.auth.get_auth_context', return_value=context), \
+                patch('schwab.auth.webbrowser.get') as browser, patch('schwab.auth.OAuth2Client', oauth), \
+                patch('schwab.auth._run_callback_server', side_effect=lambda app, port: apps.append(app)):
+            processes.get_context.return_value = processes
+            mailbox = processes.Queue.return_value
+            mailbox.put.side_effect = received.put
+            def start_listener():
+                config = processes.Process.call_args.kwargs
+                config['target'](*config['args'])
+            processes.Process.return_value.start.side_effect = start_listener
+            processes.Process.return_value.exitcode = None
+            browser.return_value.open.return_value = False
+            def wait_for_redirect(timeout):
+                if received.empty():
+                    browser.return_value.open.assert_called_once_with(context.authorization_url)
+                    listener = apps[0].test_client()
+                    self.assertEqual(listener.get('/callback?code=ignored&state=wrong').status_code, 400)
+                    self.assertEqual(listener.get('/callback?code=ok&state=expected',
+                                                  base_url='https://127.0.0.1:8182').status_code, 200)
+                    raise queue.Empty
+                return received.get_nowait()
+            mailbox.get.side_effect = wait_for_redirect
+            client = auth.client_from_login_flow(API_KEY, APP_SECRET, callback, self.token_path,
+                                                 token_write_func=writer, interactive=False)
+            client.close_session()
+        self.assertEqual(requests_seen, [['ok']])
+        self.assertEqual(mailbox.get.call_count, 2)
+        writer.assert_called_once()
+
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.token_path = os.path.join(self.tmp_dir.name, 'token.json')

@@ -3,6 +3,7 @@ completely unopinionated, and provides an easy-to-use wrapper around the Schwab
 HTTP API.'''
 
 from abc import ABC, abstractmethod
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 
 import datetime
@@ -35,6 +36,51 @@ def _path_segment(value, *, identifier=False):
             (identifier and not re.fullmatch(r'[A-Za-z0-9_-]+', value))):
         raise ValueError('invalid URL path component: {!r}'.format(value))
     return quote(value, safe='')
+
+
+def _preview_order_from_builder(order_spec):
+    '''Translate the supported order-builder fields to the preview schema.'''
+    order = order_spec.build()
+    field_names = {
+        'session': 'session', 'duration': 'duration', 'orderType': 'orderType',
+        'complexOrderStrategyType': 'strategy', 'quantity': 'quantity',
+        'price': 'price', 'orderStrategyType': 'orderStrategyType',
+    }
+    unsupported = set(order) - set(field_names) - {'orderLegCollection'}
+    if unsupported:
+        raise ValueError('OrderBuilder fields not supported by preview schema: '
+                         + ', '.join(sorted(unsupported)))
+    strategy = {dest: order[src] for src, dest in field_names.items()
+                if src in order}
+    if 'price' in strategy:
+        try:
+            exact_price = Decimal(str(strategy['price']))
+            price = float(exact_price)
+        except (InvalidOperation, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError('preview price must be a finite number') from exc
+        if not math.isfinite(price):
+            raise ValueError('preview price must be a finite number')
+        if Decimal(str(price)) != exact_price:
+            raise ValueError('preview price cannot be represented without loss of precision')
+        strategy['price'] = price
+    if 'orderLegCollection' in order:
+        legs = []
+        for leg in order['orderLegCollection']:
+            extra = set(leg) - {'instruction', 'instrument', 'quantity'}
+            instrument = leg.get('instrument', {})
+            extra_instrument = set(instrument) - {'assetType', 'symbol'}
+            if extra or extra_instrument:
+                raise ValueError('OrderBuilder leg has fields not supported '
+                                 'by the preview schema')
+            preview_leg = {key: leg[key] for key in ('instruction', 'quantity')
+                           if key in leg}
+            if 'symbol' in instrument:
+                preview_leg['finalSymbol'] = instrument['symbol']
+            if 'assetType' in instrument:
+                preview_leg['assetType'] = instrument['assetType']
+            legs.append(preview_leg)
+        strategy['orderLegs'] = legs
+    return {'orderStrategy': strategy}
 
 
 class _ContextualValueEnum(Enum):
@@ -479,6 +525,9 @@ class BaseClient(EnumEnforcer, ABC):
                 'to_entered_datetime', to_entered_datetime, end_bound=True,
                 stacklevel=4),
         }
+        # Both bounds now use the same fixed-width UTC wire format.
+        if params['fromEnteredTime'] > params['toEnteredTime']:
+            raise ValueError('from_entered_datetime must be at or before to_entered_datetime')
 
         if max_results is not None:
             params['maxResults'] = max_results
@@ -607,10 +656,15 @@ class BaseClient(EnumEnforcer, ABC):
         return self._put_request(path, order_spec)
 
     def preview_order(self, account_hash, order_spec):
-        '''Preview an order, i.e. test whether an order would be accepted by the 
-        API and see the structure it would result in.'''
+        '''Preview an order without submitting it.
+
+        A dictionary is sent unchanged and should use Schwab's ``PreviewOrder``
+        schema. An :class:`OrderBuilder` is converted to that schema for the
+        supported simple-order fields. Builder fields without a corresponding
+        preview field raise ``ValueError`` rather than being silently omitted.
+        '''
         if isinstance(order_spec, OrderBuilder):
-            order_spec = order_spec.build()
+            order_spec = _preview_order_from_builder(order_spec)
 
         path = '/trader/v1/accounts/{}/previewOrder'.format(
                 _path_segment(account_hash, identifier=True))

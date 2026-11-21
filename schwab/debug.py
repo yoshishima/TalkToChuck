@@ -194,7 +194,14 @@ def _redact_json(payload, *, stream=False):
     # quotes, backslashes and Unicode cannot bypass string replacement.
     def sanitize(value):
         if isinstance(value, dict):
-            return {key: sanitize(item) for key, item in value.items()}
+            sanitized = {}
+            for key, item in value.items():
+                if stream and key == 'content' and value.get('service') == 'ACCT_ACTIVITY':
+                    # Numeric wire fields contain account numbers and opaque order details.
+                    sanitized[key] = '<account activity omitted>'
+                else:
+                    sanitized[key] = sanitize(item)
+            return sanitized
         if isinstance(value, list):
             return [sanitize(item) for item in value]
         if (str(value) in redactor.redacted_strings

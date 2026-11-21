@@ -231,6 +231,8 @@ large values, and specialized book relabeling still run synchronously.
 Market-data DEBUG records contain a count rather than the full payload by default.
 Set ``log_stream_payloads=True`` to include redacted payloads for diagnostics;
 rendering those records can be expensive.
+Account-activity content is omitted from diagnostic logs because it can contain
+account numbers and embedded order details.
 
 If a capacity wait is canceled, the next ``handle_message()`` call resumes the
 message at its next uncalled handler. Handlers already invoked are not repeated.
@@ -300,12 +302,12 @@ labels:
     "content": [{
           "seq": 0,
           "key": "MSFT",
-          "1": 779,
-          "2": 421.65,
-          "3": 421.79,
-          "4": 421.65,
-          "5": 421.755,
-          "6": 26.0,
+          "1": 421.65,
+          "2": 421.79,
+          "3": 421.65,
+          "4": 421.755,
+          "5": 26.0,
+          "6": 779,
           "7": 1715903940000,
           "8": 19859
       }]
@@ -315,6 +317,12 @@ These labels are tricky to decode, and require a knowledge of the documentation
 to decode properly. ``schwab-api`` makes your life easier by doing this decoding 
 for you, replacing numerical labels with strings proposed by the community For 
 instance, the message above would be relabeled as:
+
+The equity chart mapping follows the current API reference: fields 1–5 are
+open, high, low, close, and volume, and field 6 is sequence. Earlier versions
+of this client used field 1 for sequence and fields 2–6 for OHLCV; consumers
+using raw field numbers or comparing historical data should account for that
+change.
 
 .. code-block:: python
 
@@ -576,6 +584,10 @@ book is called "listed." Testing indicates this stream corresponds to the NYSE
 book, but if you find any behavior that suggests otherwise please
 `let us know <https://github.com/alexgolec/schwab-api/issues>`__.
 
+For each market-maker entry, field 2 is exposed as ``QUOTE_TIME_MILLIS``.
+Earlier versions labeled this field ``SEQUENCE``. The old enum name remains an
+alias, but handler output uses the new name for both bids and asks.
+
 .. automethod:: schwab.streaming::StreamClient.nyse_book_subs
 .. automethod:: schwab.streaming::StreamClient.nyse_book_unsubs
 .. automethod:: schwab.streaming::StreamClient.nyse_book_add
@@ -615,7 +627,7 @@ volume.
 Symbols in upper case and separated by commas.
 
 (PREFIX)_(SORTFIELD)_(FREQUENCY) where PREFIX is:
- * Indices: $COMPX $DJI, $SPX.X, INDEX_ALL
+ * Indices: $COMPX, $DJI, $SPX, INDEX_ALL
  * Exchanges: NYSE, NASDAQ, OTCBB, EQUITY_ALL
  * Option: OPTION_PUT, OPTION_CALL, OPTION_ALL
 
@@ -623,7 +635,11 @@ and sortField is:
  * VOLUME, TRADES, PERCENT_CHANGE_UP, PERCENT_CHANGE_DOWN, AVERAGE_PERCENT_VOLUME
 
 and frequency is:
- * 0, 1, 5, 10, 30 60 minutes (0 is for all day)
+ * 0, 1, 5, 10, 30, 60 minutes (0 is for all day)
+
+For example, ``$SPX_VOLUME_5`` requests the five-minute volume screener for
+the S&P 500. Pass the complete key to the subscription method, not an
+individual security symbol.
 
 Both the equity and option screener streams use a common set of fields:
 

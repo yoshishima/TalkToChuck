@@ -250,6 +250,22 @@ class TokenMetadata:
         }
 
 
+def _validate_token_response(response):
+    """Validate credentials before Authlib replaces the active token."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and 'error' in payload:
+        # Preserve Authlib's OAuth errors and transient HTTP error handling.
+        return response
+    response.raise_for_status()
+    access_token = payload.get('access_token') if isinstance(payload, dict) else None
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise ValueError('Token endpoint response is missing a valid access token')
+    return response
+
+
 def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                                 enforce_enums):
     '''Share refresh configuration for loaded and newly issued tokens.'''
@@ -272,6 +288,7 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                             limits=httpx.Limits(max_connections=100,
                                                 max_keepalive_connections=20,
                                                 keepalive_expiry=60.0))
+    session.register_compliance_hook('refresh_token_response', _validate_token_response)
     if not asyncio:
         _serialize_sync_token_refresh(session)
     _install_refresh_fallback(session, asynchronous=asyncio)
@@ -352,6 +369,10 @@ def _install_refresh_fallback(session, *, asynchronous):
 # client_from_login_flow
 
 
+class UnsupportedBrowserCallback(ValueError):
+    """The configured redirect URI requires the manual login flow."""
+
+
 def _get_callback_path(encoded_path):
     '''Return a literal Flask route while preserving the OAuth redirect URI.'''
     path = urllib.parse.unquote(encoded_path or '/', errors='strict')
@@ -360,7 +381,7 @@ def _get_callback_path(encoded_path):
     if ('<' in path or '>' in path or '//' in path
             or any(ord(char) < 32 for char in path)
             or path == '/schwab-py-internal/status'):
-        raise ValueError('Unsupported callback URL path')
+        raise UnsupportedBrowserCallback('Unsupported callback URL path')
     return path
 
 
@@ -592,7 +613,7 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
 
     if parsed.hostname != '127.0.0.1':
         # TODO: document this error
-        raise ValueError(
+        raise UnsupportedBrowserCallback(
                 ('Disallowed hostname {}. client_from_login_flow only allows '+
                  'callback URLs with hostname 127.0.0.1. See here for ' +
                  'more information: https://schwab-py.readthedocs.io/en/' +
@@ -624,7 +645,10 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     # Context manager to kill the server upon completion
     @contextlib.contextmanager
     def callback_server():
-        server.start()
+        try:
+            server.start()
+        except OSError as exc:
+            raise RedirectServerError('Could not start the local callback server') from exc
 
         try:
             yield
@@ -944,6 +968,7 @@ def client_from_received_url(
                         'client_from_access_functions for async writers')
     oauth = OAuth2Client(api_key, redirect_uri=auth_context.callback_url)
     try:
+        oauth.register_compliance_hook('access_token_response', _validate_token_response)
         token = oauth.fetch_token(
             TOKEN_ENDPOINT,
             authorization_response=received_url,

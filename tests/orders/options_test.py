@@ -110,6 +110,18 @@ class OptionSymbolTest(unittest.TestCase):
         op = OptionSymbol('AAPL', '261218', 'P', '350')
         self.assertEqual('AAPL  261218P00350000', op.build())
 
+    def test_expiration_has_six_ascii_digits(self):
+        for invalid in ('27115', '270230', '２７０１１５'):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    OptionSymbol('AAPL', invalid, 'P', '350')
+                with self.assertRaises(ValueError):
+                    OptionSymbol.parse_symbol('AAPL  ' + invalid + 'P00350000')
+        for expiry in ('270115', '271105'):
+            symbol = 'AAPL  ' + expiry + 'P00350000'
+            self.assertEqual(symbol, OptionSymbol('AAPL', expiry, 'P', '350').build())
+            self.assertEqual(symbol, OptionSymbol.parse_symbol(symbol).build())
+
 
     def test_strike_as_float(self):
         with self.assertRaisesRegex(

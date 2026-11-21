@@ -344,6 +344,16 @@ class _TestClient:
     # get_orders_for_account
 
     @patch('schwab.client.base.datetime.datetime', mockdatetime)
+    def test_inverted_order_history_window_does_not_send(self):
+        for query in (lambda **kw: self.client.get_orders_for_account(ACCOUNT_HASH, **kw),
+                      self.client.get_orders_for_all_linked_accounts):
+            for bounds in ({'from_entered_datetime': datetime.date(2021, 1, 1)},
+                           {'to_entered_datetime': datetime.date(2018, 1, 1)}):
+                with self.subTest(bounds=bounds), self.assertRaisesRegex(ValueError, 'at or before'):
+                    query(**bounds)
+        self.mock_session.get.assert_not_called()
+
+    @patch('schwab.client.base.datetime.datetime', mockdatetime)
     def test_get_orders_for_account_vanilla(self):
         self.client.get_orders_for_account(ACCOUNT_HASH)
         self.mock_session.get.assert_called_once_with(
@@ -390,10 +400,10 @@ class _TestClient:
     def test_get_orders_for_account_from_entered_datetime(self):
         self.client.get_orders_for_account(
                 ACCOUNT_HASH, from_entered_datetime=datetime.datetime(
-                    year=2024, month=6, day=5, hour=4, minute=3, second=2))
+                    year=2019, month=12, day=5, hour=4, minute=3, second=2))
         self.mock_session.get.assert_called_once_with(
             self.make_url('/trader/v1/accounts/{accountHash}/orders'), params={
-                'fromEnteredTime': '2024-06-05T04:03:02.000Z',
+                'fromEnteredTime': '2019-12-05T04:03:02.000Z',
                 'toEnteredTime': NOW_DATETIME_ISO,
             })
 
@@ -495,10 +505,10 @@ class _TestClient:
     def test_get_orders_for_all_linked_accounts_from_entered_datetime(self):
         self.client.get_orders_for_all_linked_accounts(
                 from_entered_datetime=datetime.datetime(
-                    year=2024, month=6, day=5, hour=4, minute=3, second=2))
+                    year=2019, month=12, day=5, hour=4, minute=3, second=2))
         self.mock_session.get.assert_called_once_with(
             self.make_url('/trader/v1/orders'), params={
-                'fromEnteredTime': '2024-06-05T04:03:02.000Z',
+                'fromEnteredTime': '2019-12-05T04:03:02.000Z',
                 'toEnteredTime': NOW_DATETIME_ISO,
             })
 
@@ -607,7 +617,7 @@ class _TestClient:
 
     
     def test_preview_order(self):
-        order_spec = {'order': 'spec'}
+        order_spec = {'orderStrategy': {'orderType': 'MARKET'}}
         self.client.preview_order(ACCOUNT_HASH, order_spec)
         self.mock_session.post.assert_called_once_with(
             self.make_url('/trader/v1/accounts/{accountHash}/previewOrder'),
@@ -616,11 +626,38 @@ class _TestClient:
     
     def test_preview_order_order_builder(self):
         order_spec = OrderBuilder(enforce_enums=False).set_order_type('LIMIT')
-        expected_spec = {'orderType': 'LIMIT'}
+        expected_spec = {'orderStrategy': {'orderType': 'LIMIT'}}
         self.client.preview_order(ACCOUNT_HASH, order_spec)
         self.mock_session.post.assert_called_once_with(
             self.make_url('/trader/v1/accounts/{accountHash}/previewOrder'),
             json=expected_spec)
+
+    def test_preview_order_builder_converts_legs_and_price(self):
+        order_spec = (OrderBuilder(enforce_enums=False)
+                      .set_order_type('LIMIT')
+                      .set_complex_order_strategy_type('NONE')
+                      .set_price('6.45')
+                      .add_option_leg('BUY_TO_OPEN', 'XYZ   240315C00050000', 2))
+        self.client.preview_order(ACCOUNT_HASH, order_spec)
+        self.mock_session.post.assert_called_once_with(
+            self.make_url('/trader/v1/accounts/{accountHash}/previewOrder'),
+            json={'orderStrategy': {
+                'orderType': 'LIMIT', 'strategy': 'NONE', 'price': 6.45,
+                'orderLegs': [{'instruction': 'BUY_TO_OPEN', 'quantity': 2,
+                               'finalSymbol': 'XYZ   240315C00050000',
+                               'assetType': 'OPTION'}]}})
+
+    def test_preview_order_builder_rejects_unrepresentable_fields(self):
+        order_spec = OrderBuilder(enforce_enums=False).set_stop_price('1.00')
+        with self.assertRaisesRegex(ValueError, 'stopPrice'):
+            self.client.preview_order(ACCOUNT_HASH, order_spec)
+        self.mock_session.post.assert_not_called()
+
+    def test_preview_refuses_to_change_an_exact_price(self):
+        for price in ('1.0000000000000001', '1e-400'):
+            with self.subTest(price=price), self.assertRaisesRegex(ValueError, 'precision'):
+                self.client.preview_order(ACCOUNT_HASH, OrderBuilder().copy_price(price))
+        self.mock_session.post.assert_not_called()
 
     
     # get_transactions

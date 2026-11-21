@@ -381,6 +381,12 @@ class TokenPathPreflightTest(unittest.TestCase):
         manual.assert_called_once()
         self.assertIn('RedirectServerTimeoutError: no server', output.getvalue())
 
+        with patch('schwab.auth.client_from_login_flow', side_effect=OSError('write failed')), \
+                patch('schwab.auth.client_from_manual_flow') as manual:
+            with self.assertRaisesRegex(OSError, 'write failed'):
+                module.main('key', 'secret', 'https://127.0.0.1:8182', 'unused', None)
+            manual.assert_not_called()
+
 
 # ---------------------------------------------------------------- D5 decoders
 class DecoderErrorTest(unittest.IsolatedAsyncioTestCase):
@@ -468,7 +474,7 @@ class PartialBookTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({'BID_PRICE': 1.0, 'TOTAL_VOLUME': 100, 'NUM_BIDS': 1},
                          bids[0])
         self.assertEqual('not-a-level', bids[1])
-        self.assertEqual({'EXCHANGE': 'EX', 'BID_VOLUME': 50, 'SEQUENCE': 9},
+        self.assertEqual({'EXCHANGE': 'EX', 'BID_VOLUME': 50, 'QUOTE_TIME_MILLIS': 9},
                          bids[2]['BIDS'][0])
         self.assertEqual('not-a-list', labeled['content'][0]['ASKS'])
         self.assertEqual('not-an-entry', labeled['content'][1])
@@ -752,7 +758,7 @@ class NaiveDatetimeWarningTest(unittest.TestCase):
             lambda: client.get_orders_for_account(
                 'SYNTHHASH', from_entered_datetime=naive),
             lambda: client.get_orders_for_all_linked_accounts(
-                to_entered_datetime=naive),
+                from_entered_datetime=naive.date(), to_entered_datetime=naive),
             lambda: client.get_transactions('SYNTHHASH', start_date=naive),
         )
         for call in calls:

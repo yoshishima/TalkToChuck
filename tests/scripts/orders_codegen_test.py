@@ -11,6 +11,35 @@ from schwab.scripts.orders_codegen import latest_order_main, _latest_order
 
 
 class LatestOrderSelectionTest(unittest.TestCase):
+    def test_warns_when_the_requested_result_limit_is_reached(self):
+        orders = [{'orderId': n, 'enteredTime': '2025-01-01T12:00:00Z'}
+                  for n in range(3000)]
+        with patch('schwab.scripts.orders_codegen.client_from_token_file') as factory, \
+                patch('schwab.scripts.orders_codegen.construct_repeat_order') as construct, \
+                patch('schwab.scripts.orders_codegen.code_for_builder'), patch('builtins.print') as output:
+            query = factory.return_value.get_orders_for_all_linked_accounts
+            query.return_value = httpx.Response(200, json=orders)
+            result = latest_order_main(['--token_file', 'unused', '--api_key', 'key',
+                                        '--app_secret', 'secret'])
+        self.assertEqual(0, result)
+        query.assert_called_once_with(max_results=3000)
+        construct.assert_called_once_with(orders[-1])
+        self.assertIn('reached the requested result limit', str(output.call_args_list))
+
+    def test_only_an_empty_list_means_no_recent_orders(self):
+        args = ['--token_file', 'unused', '--api_key', 'key', '--app_secret', 'secret']
+        for account_args in ([], ['--account_hash', 'test-account']):
+            for body in (b'[]', b'{}', b'false', b'""', b'null', b'not JSON', b'{"errors":[]}'):
+                with self.subTest(account_args=account_args, body=body), \
+                        patch('schwab.scripts.orders_codegen.client_from_token_file') as factory, \
+                        patch('builtins.print') as output:
+                    response = httpx.Response(200, content=body)
+                    factory.return_value.get_orders_for_account.return_value = response
+                    factory.return_value.get_orders_for_all_linked_accounts.return_value = response
+                    result = latest_order_main(args + account_args)
+                    self.assertEqual(result == 0, body == b'[]')
+                    self.assertEqual('No recent orders found' in str(output.call_args), body == b'[]')
+
     def test_uses_entered_time_not_order_id_and_handles_timezones(self):
         orders = [
             {'orderId': 900, 'enteredTime': '2024-01-01T00:00:00Z'},

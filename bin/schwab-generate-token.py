@@ -12,9 +12,8 @@ def main(api_key, app_secret, callback_url, token_path, requested_browser):
                 api_key, app_secret, callback_url, token_path,
                 requested_browser=requested_browser, callback_timeout=300)
         return 0
-    except Exception as e:
-        # Report why the browser flow failed. These errors describe the
-        # callback server, browser or token file; they do not contain tokens.
+    except (schwab.auth.RedirectServerError, schwab.auth.RedirectTimeoutError,
+            schwab.auth.UnsupportedBrowserCallback) as e:
         print('Failed to fetch a token using a web browser ({}: {}), falling '
               'back to the manual flow'.format(type(e).__name__, e))
 

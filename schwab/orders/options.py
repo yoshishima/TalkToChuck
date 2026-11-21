@@ -5,12 +5,11 @@ from schwab.orders.generic import OrderBuilder
 
 
 def _parse_expiration_date(expiration_date):
-    date = None
-    try:
-        date = datetime.datetime.strptime(expiration_date, '%y%m%d')
-        return datetime.date(year=date.year, month=date.month, day=date.day)
-    except ValueError:
-        pass
+    if len(expiration_date) == 6 and expiration_date.isascii() and expiration_date.isdigit():
+        try:
+            return datetime.datetime.strptime(expiration_date, '%y%m%d').date()
+        except ValueError:
+            pass
 
     raise ValueError(
         'expiration date must follow format ' +

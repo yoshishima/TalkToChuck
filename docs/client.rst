@@ -245,8 +245,12 @@ applications. When using an existing synchronous client, its
 ``async_place_order()``, ``async_replace_order()``, and ``async_cancel_order()``
 methods run the corresponding operation in a worker thread; other calls can use
 ``asyncio.to_thread``. The session and custom token callbacks must be safe to
-use from that thread. Canceling the awaiting task does not stop an operation
-already running in the worker; its order outcome may be unknown.
+use from that thread. Once the worker has started, it can send an order even
+after the awaiting task is canceled, including when it was still waiting for
+the order pacing interval. To retrieve the eventual response after a caller
+timeout, keep a reference to the order task and use
+``await asyncio.wait_for(asyncio.shield(task), timeout)``. If the worker
+itself times out, reconcile the outcome with the broker before resubmitting.
 
 
 +++++++++
@@ -378,6 +382,15 @@ instead of creating your own order specs.
 
 .. automethod:: schwab.client.Client.place_order
 
+.. automethod:: schwab.client.Client.preview_order
+
+Preview dictionaries use Schwab's ``PreviewOrder`` shape, including an
+``orderStrategy`` object. A simple :class:`~schwab.orders.generic.OrderBuilder`
+is converted to that shape, including its legs. If it contains fields that
+the preview strategy schema cannot represent, preview raises ``ValueError``;
+pass a preview dictionary directly when finer control is needed. This changes
+the previously unwrapped request sent for an ``OrderBuilder``.
+
 If order submission times out or the connection fails after transmission, the
 order's state is unknown: Schwab may have accepted it even though no response
 was received. A timeout during an OAuth refresh can instead occur before the
@@ -412,6 +425,10 @@ For frequent polling when only recent activity is relevant, use
 one-day window by default and accepts a shorter fractional number of days.
 Older orders, including open orders, are excluded, so use an appropriately
 wide window or the full account query when reconciling complete order state.
+Each call retrieves one result set. If the count reaches ``max_results``
+(the documented broker default is 3,000), the window may contain more orders.
+Use narrower windows and deduplicate order IDs at shared boundaries. An
+unmatched order in a capped response still has an unknown outcome.
 
 .. automethod:: schwab.client.Client.get_recent_orders_for_account
 .. automethod:: schwab.client.Client.get_orders_for_all_linked_accounts
@@ -499,6 +516,8 @@ when exact boundaries or a market-local day are needed. Datetime values are
 converted to UTC without advancing the end bound. Naive datetimes mean UTC and,
 as for price history, emit a ``UserWarning``: a naive local time would shift
 the query window by the local UTC offset.
+Order queries raise ``ValueError`` if the resulting start is later than the end,
+including when one of the bounds comes from the default lookback.
 
 ++++++++++++++++++++++++++++++
 Contextual price-history enums

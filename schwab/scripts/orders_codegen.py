@@ -7,6 +7,8 @@ from schwab.contrib.orders import (
     UnrepeatableOrderError, construct_repeat_order, code_for_builder)
 from schwab.scripts import APP_SECRET_ENV_VAR, resolve_app_secret
 
+_HISTORY_RESULT_LIMIT = 3000
+
 
 def _latest_order(orders):
     if not isinstance(orders, list) or not orders:
@@ -74,34 +76,25 @@ def latest_order_main(sys_args):
         account_hash = args.account_hash
 
 
-    # Fetch orders
-    def get_orders(method):
-        r = method()
-        if r.status_code != httpx.codes.OK:
-            print(('Returned HTTP status code {}. This is most often caused ' +
-                   'by an invalid account ID or hash.').format(r.status_code))
-            return None
-        return r.json()
-
     if account_hash is not None:
-        orders = get_orders(lambda: client.get_orders_for_account(account_hash))
-        if orders is None:
-            return -1
-
-        if isinstance(orders, dict) and ('error' in orders or 'errors' in orders):
-            error = orders.get('errors', orders.get('error'))
-            print(('Schwab returned error: "{}", This is most often caused ' +
-                   'by an invalid account ID or hash').format(error))
-            return -1
+        response = client.get_orders_for_account(account_hash, max_results=_HISTORY_RESULT_LIMIT)
     else:
-        orders = get_orders(lambda: client.get_orders_for_all_linked_accounts())
-        if orders is None:
-            return -1
-
-        if isinstance(orders, dict) and ('error' in orders or 'errors' in orders):
-            error = orders.get('errors', orders.get('error'))
-            print('Schwab returned error: "{}"'.format(error))
-            return -1
+        response = client.get_orders_for_all_linked_accounts(max_results=_HISTORY_RESULT_LIMIT)
+    if response.status_code != httpx.codes.OK:
+        print('Returned HTTP status code {} fetching order history.'.format(response.status_code))
+        return -1
+    try:
+        orders = response.json()
+    except ValueError:
+        print('Order history response contained invalid JSON.')
+        return -1
+    if isinstance(orders, dict) and ('error' in orders or 'errors' in orders):
+        error = orders.get('errors', orders.get('error'))
+        print('Schwab returned error: "{}"'.format(error))
+        return -1
+    if not isinstance(orders, list):
+        print('Expected a list of orders in the order history response.')
+        return -1
 
     # Construct and emit order code
     if orders:
@@ -110,6 +103,9 @@ def latest_order_main(sys_args):
         except ValueError:
             print('Unable to determine the most recent order from its timestamp.')
             return -1
+        if len(orders) >= _HISTORY_RESULT_LIMIT:
+            print('# Warning: order history reached the requested result limit. '
+                  'This is the latest order among the returned rows.')
 
         # XXX: If necessary, warn about the jank around destinations
         emit_destination_warning_newline = False

@@ -3,10 +3,31 @@ from schwab.orders.common import *
 from schwab.orders.generic import OrderBuilder
 
 import unittest
+import json
+import re
+from textwrap import dedent
 from pathlib import Path
 from unittest.mock import Mock
 
 class MultiOrderTest(unittest.TestCase):
+
+    def test_documented_bracket_matches_order_specification(self):
+        docs = (Path(__file__).resolve().parents[2] /
+                'docs' / 'order-builder.rst').read_text(encoding='utf-8')
+        bracket_docs = docs.split('For an advanced example', 1)[1]
+        def block(language):
+            match = re.search(r'^\.\. code-block:: ' + language + r'\n\n((?:  .*\n|\n)+)',
+                              bracket_docs, flags=re.MULTILINE)
+            return dedent(match.group(1))
+        scope = {}
+        exec(block('python'), scope)
+        order = scope['bracket'].build()
+        self.assertEqual(order, json.loads(block('JSON')))
+        profit, stop = order['childOrderStrategies'][0]['childOrderStrategies']
+        self.assertEqual((profit['price'], stop['stopPrice'], stop['price']),
+                         ('1400.00', '1250.00', '1240.00'))
+        self.assertEqual([leg['duration'] for leg in (order, profit, stop)],
+                         ['GOOD_TILL_CANCEL'] * 3)
 
     def test_documented_composite_example_submits_once(self):
         docs = (Path(__file__).resolve().parents[2] /

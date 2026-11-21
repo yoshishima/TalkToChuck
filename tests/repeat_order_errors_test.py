@@ -10,6 +10,29 @@ from schwab.scripts.orders_codegen import latest_order_main
 
 
 class RepeatOrderErrorsTest(unittest.TestCase):
+    def test_stop_limit_requires_both_fixed_prices_or_explicit_links(self):
+        order = {'orderStrategyType': 'SINGLE', 'orderType': 'STOP_LIMIT', 'price': 15}
+        with self.assertRaisesRegex(UnrepeatableOrderError, 'without stopPrice'):
+            construct_repeat_order(order)
+        order.update(stopPriceLinkBasis='BID', stopPriceLinkType='VALUE', stopPriceOffset=1)
+        self.assertEqual(construct_repeat_order(order).build(), order)
+        del order['price']
+        with self.assertRaisesRegex(UnrepeatableOrderError, 'without price'):
+            construct_repeat_order(order)
+
+    def test_cli_refuses_unpriced_child(self):
+        order = {'orderId': 7, 'orderStrategyType': 'TRIGGER',
+                 'childOrderStrategies': [{'orderStrategyType': 'SINGLE', 'orderType': 'STOP'}]}
+        with patch('schwab.scripts.orders_codegen.client_from_token_file') as client:
+            client.return_value.get_orders_for_all_linked_accounts.return_value = (
+                httpx2.Response(200, json=[order]))
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                result = latest_order_main(['--token_file', 'unused', '--api_key', 'synthetic',
+                                            '--app_secret', 'synthetic'])
+        self.assertNotEqual(result, 0)
+        self.assertIn('order.childOrderStrategies[0]', output.getvalue())
+        self.assertNotIn('OrderBuilder()', output.getvalue())
+
     def test_invalid_builder_values_are_unrepeatable(self):
         for field, value in [('activationPrice', 0.0),
                              ('stopPriceOffset', None), ('quantity', 0)]:
