@@ -221,6 +221,8 @@ does not guarantee that Schwab will accept the token. An OAuth error such as
 ``invalid_grant`` still propagates by default because credentials may have been
 revoked. ``configure_refresh_fallback(transient=False)`` disables transient
 fallback; ``allow_oauth_errors=True`` explicitly also allows OAuth rejections.
+Concurrent callers waiting on the same refresh may share an eligible fallback
+while the token has sufficient lifetime. A later request attempts refresh again.
 Use that option only if the application can handle rejected credentials.
 ``min_valid_seconds`` adjusts the minimum remaining lifetime. Persistence
 errors and failures after a token has changed are never suppressed. Configure

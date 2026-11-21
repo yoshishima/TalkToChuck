@@ -289,8 +289,6 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                                                 max_keepalive_connections=20,
                                                 keepalive_expiry=60.0))
     session.register_compliance_hook('refresh_token_response', _validate_token_response)
-    if not asyncio:
-        _serialize_sync_token_refresh(session)
     _install_refresh_fallback(session, asynchronous=asyncio)
 
     return client_class(
@@ -300,33 +298,16 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
         enforce_enums=enforce_enums)
 
 
-def _serialize_sync_token_refresh(session):
-    '''Let only one thread at a time check and refresh a synchronous token.
-
-    Authlib serializes refreshes for its async client but not for its sync
-    client, so threads sharing one client could each refresh an expiring token
-    and persist the results out of order. Waiting threads re-check the
-    session's current token, so only the first one refreshes.
-    '''
-    ensure_active_token = session.ensure_active_token
-    # Re-entrant: a custom token writer may itself call the API.
-    lock = threading.RLock()
-
-    def serialized_ensure_active_token(token=None):
-        with lock:
-            return ensure_active_token(session.token)
-
-    session.ensure_active_token = serialized_ensure_active_token
-    return session
-
-
 def _install_refresh_fallback(session, *, asynchronous):
     '''Use an unchanged, sufficiently valid token after eligible failures.'''
     session._schwab_refresh_fallback = {
         'transient': True, 'allow_oauth_errors': False, 'min_valid_seconds': 30.0}
     ensure = session.ensure_active_token
+    # Each eligible failure publishes a distinct marker. Only callers that
+    # entered before it was published may share it. Keep no exception traceback.
+    last_failure = None
 
-    def eligible(exc, old_token):
+    def eligible(kind, old_token):
         policy = session._schwab_refresh_fallback
         if not isinstance(old_token, dict) or session.token is not old_token:
             return False
@@ -334,35 +315,52 @@ def _install_refresh_fallback(session, *, asynchronous):
         if (type(expiry) not in (int, float) or not math.isfinite(expiry)
                 or expiry - time.time() <= policy['min_valid_seconds']):
             return False
-        if isinstance(exc, OAuthError):
-            return policy['allow_oauth_errors']
-        if not policy['transient']:
-            return False
-        if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code == 429 or 500 <= exc.response.status_code < 600
-        return isinstance(exc, httpx.TransportError)
+        return policy[kind]
+
+    @contextlib.contextmanager
+    def attempt(seen, old_token):
+        nonlocal last_failure
+        if last_failure is not None and last_failure is not seen:
+            kind, failed_token = last_failure
+            if failed_token is old_token and eligible(kind, old_token):
+                yield False
+                return
+        last_failure = None
+        try:
+            yield True
+        except Exception as exc:
+            if isinstance(exc, OAuthError):
+                kind = 'allow_oauth_errors'
+            elif isinstance(exc, httpx.TransportError) or (
+                    isinstance(exc, httpx.HTTPStatusError) and
+                    (exc.response.status_code == 429 or 500 <= exc.response.status_code < 600)):
+                kind = 'transient'
+            else:
+                raise
+            if not eligible(kind, old_token):
+                raise
+            last_failure = (kind, old_token)
+            get_logger().warning('Token refresh failed; using the unexpired access token')
 
     if asynchronous:
+        lock = asyncio_module.Lock()
         async def wrapped(token=None):
-            old_token = session.token
-            try:
-                return await ensure(old_token)
-            except Exception as exc:
-                if not eligible(exc, old_token):
-                    raise
-                get_logger().warning('Token refresh failed; using the unexpired access token')
-        session.ensure_active_token = wrapped
+            seen, old_token = last_failure, session.token
+            async with lock:
+                with attempt(seen, old_token) as refresh:
+                    if refresh:
+                        return await ensure(session.token)
     else:
+        # A synchronous token writer may re-enter the client.
+        lock = threading.RLock()
         def wrapped(token=None):
-            old_token = session.token
-            try:
-                return ensure(old_token)
-            except Exception as exc:
-                if not eligible(exc, old_token):
-                    raise
-                get_logger().warning('Token refresh failed; using the unexpired access token')
+            seen, old_token = last_failure, session.token
+            with lock:
+                with attempt(seen, old_token) as refresh:
+                    if refresh:
+                        return ensure(session.token)
                 return True
-        session.ensure_active_token = wrapped
+    session.ensure_active_token = wrapped
 
 
 ################################################################################

@@ -65,6 +65,60 @@ class BackgroundRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(client._refresh_thread.is_alive())
 
 class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
+    def test_sync_callers_share_only_an_overlapping_refresh_failure(self):
+        import threading
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        import httpx2
+
+        original = {'expires_at': int(time.time()) + 120}
+        arrived = threading.Barrier(8)
+        local = threading.local()
+        class Session:
+            @property
+            def token(self):
+                if not getattr(local, 'entered', False):
+                    local.entered = True
+                    arrived.wait(timeout=3)
+                return original
+
+        session = Session()
+        ensure = session.ensure_active_token = Mock(side_effect=httpx2.ReadTimeout('synthetic'))
+        auth._install_refresh_fallback(session, asynchronous=False)
+        with ThreadPoolExecutor(max_workers=8) as workers:
+            calls = [workers.submit(session.ensure_active_token) for _ in range(8)]
+            self.assertTrue(all(call.result(timeout=3) for call in calls))
+        ensure.assert_called_once()
+        local.entered = True
+        self.assertTrue(session.ensure_active_token())
+        self.assertEqual(2, ensure.call_count)
+
+    async def test_async_waiters_share_failure_and_cancellation_is_local(self):
+        import asyncio
+        import time
+        import httpx2
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        gate = asyncio.Event()
+        async def fail(token):
+            await gate.wait()
+            raise httpx2.ReadTimeout('synthetic')
+        ensure = AsyncMock(side_effect=fail)
+        session = SimpleNamespace(token={'expires_at': int(time.time()) + 120},
+                                  ensure_active_token=ensure)
+        auth._install_refresh_fallback(session, asynchronous=True)
+        tasks = [asyncio.create_task(session.ensure_active_token()) for _ in range(8)]
+        await asyncio.sleep(0)
+        tasks[1].cancel()
+        gate.set()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        self.assertIsInstance(results[1], asyncio.CancelledError)
+        self.assertEqual(results.count(None), 7)
+        ensure.assert_awaited_once()
+        await session.ensure_active_token()
+        self.assertEqual(2, ensure.await_count)
+
     async def test_sync_and_async_refresh_failures_use_only_eligible_tokens(self):
         import time
         import httpx2
@@ -98,8 +152,6 @@ class RefreshFallbackTests(unittest.IsolatedAsyncioTestCase):
                            'token_type': 'Bearer', 'expires_at': int(time.time()) + 200},
                     token_endpoint=auth.TOKEN_ENDPOINT, leeway=300,
                     transport=httpx2.MockTransport(handle))
-                if not asynchronous:
-                    auth._serialize_sync_token_refresh(session)
                 auth._install_refresh_fallback(session, asynchronous=asynchronous)
                 client = (AsyncClient if asynchronous else Client)('key', session)
                 async def place():
