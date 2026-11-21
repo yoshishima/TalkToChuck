@@ -129,6 +129,24 @@ class StreamIsolationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, seen[0][1])
         self.assertEqual(len(frames) + 1, socket.recv.await_count)
 
+    async def test_reader_shares_loop_with_cooperative_book_dispatch(self):
+        levels = [{'0': 100, '3': [{'0': 'EX', '1': 10, '2': i} for i in range(3)]}
+                  for _ in range(10)]
+        book = [{'key': str(i), '2': levels, '3': levels} for i in range(8)]
+        frames = [json.dumps({'data': [{'service': 'NASDAQ_BOOK', 'seq': i, 'content': book}]})
+                  for i in range(20)]
+        client, socket = self.make_client(frames, max_pending_messages=16)
+        seen = []
+        client.add_nasdaq_book_handler(
+            lambda message: seen.append((message['seq'], socket.recv.await_count)))
+        async def consume():
+            for _ in frames:
+                await client.handle_message()
+        await asyncio.wait_for(asyncio.gather(
+            consume(), client.level_one_equity_subs(['SYN'])), timeout=3)
+        self.assertLess(seen[0][1], len(frames))
+        self.assertEqual(list(range(len(frames))), [seq for seq, _ in seen])
+
     async def test_invalid_capacity(self):
         for value in (0, -1, True, 1.5, None):
             with self.assertRaises(ValueError):
