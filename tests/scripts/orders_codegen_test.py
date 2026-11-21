@@ -11,6 +11,20 @@ from schwab.scripts.orders_codegen import latest_order_main, _latest_order
 
 
 class LatestOrderSelectionTest(unittest.TestCase):
+    def test_only_an_empty_list_means_no_recent_orders(self):
+        args = ['--token_file', 'unused', '--api_key', 'key', '--app_secret', 'secret']
+        for account_args in ([], ['--account_hash', 'test-account']):
+            for body in (b'[]', b'{}', b'false', b'""', b'null', b'not JSON', b'{"errors":[]}'):
+                with self.subTest(account_args=account_args, body=body), \
+                        patch('schwab.scripts.orders_codegen.client_from_token_file') as factory, \
+                        patch('builtins.print') as output:
+                    response = httpx.Response(200, content=body)
+                    factory.return_value.get_orders_for_account.return_value = response
+                    factory.return_value.get_orders_for_all_linked_accounts.return_value = response
+                    result = latest_order_main(args + account_args)
+                    self.assertEqual(result == 0, body == b'[]')
+                    self.assertEqual('No recent orders found' in str(output.call_args), body == b'[]')
+
     def test_uses_entered_time_not_order_id_and_handles_timezones(self):
         orders = [
             {'orderId': 900, 'enteredTime': '2024-01-01T00:00:00Z'},

@@ -74,34 +74,25 @@ def latest_order_main(sys_args):
         account_hash = args.account_hash
 
 
-    # Fetch orders
-    def get_orders(method):
-        r = method()
-        if r.status_code != httpx.codes.OK:
-            print(('Returned HTTP status code {}. This is most often caused ' +
-                   'by an invalid account ID or hash.').format(r.status_code))
-            return None
-        return r.json()
-
     if account_hash is not None:
-        orders = get_orders(lambda: client.get_orders_for_account(account_hash))
-        if orders is None:
-            return -1
-
-        if isinstance(orders, dict) and ('error' in orders or 'errors' in orders):
-            error = orders.get('errors', orders.get('error'))
-            print(('Schwab returned error: "{}", This is most often caused ' +
-                   'by an invalid account ID or hash').format(error))
-            return -1
+        response = client.get_orders_for_account(account_hash)
     else:
-        orders = get_orders(lambda: client.get_orders_for_all_linked_accounts())
-        if orders is None:
-            return -1
-
-        if isinstance(orders, dict) and ('error' in orders or 'errors' in orders):
-            error = orders.get('errors', orders.get('error'))
-            print('Schwab returned error: "{}"'.format(error))
-            return -1
+        response = client.get_orders_for_all_linked_accounts()
+    if response.status_code != httpx.codes.OK:
+        print('Returned HTTP status code {} fetching order history.'.format(response.status_code))
+        return -1
+    try:
+        orders = response.json()
+    except ValueError:
+        print('Order history response contained invalid JSON.')
+        return -1
+    if isinstance(orders, dict) and ('error' in orders or 'errors' in orders):
+        error = orders.get('errors', orders.get('error'))
+        print('Schwab returned error: "{}"'.format(error))
+        return -1
+    if not isinstance(orders, list):
+        print('Expected a list of orders in the order history response.')
+        return -1
 
     # Construct and emit order code
     if orders:
