@@ -3,6 +3,16 @@
 Notable changes to this fork are summarized below. For the complete history,
 see the repository's commits and tags.
 
+## 1.7.9 — 2026-11-21
+
+- Share eligible token-refresh failures across overlapping requests and isolate
+  paced synchronous order workers from the asyncio default executor.
+- Give waiting stream consumers time to run during subscription acknowledgments
+  and copy nested book updates in a single cooperative traversal.
+- Apply backpressure to the streaming example's output queue and print off the
+  event loop.
+- Limit HTTP response body capture in bug reports to 32 KiB by default.
+
 ## 1.7.7 — 2026-11-12
 
 - Refresh the README and update links to this repository.
