@@ -250,6 +250,22 @@ class TokenMetadata:
         }
 
 
+def _validate_token_response(response):
+    """Validate credentials before Authlib replaces the active token."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and 'error' in payload:
+        # Preserve Authlib's OAuth errors and transient HTTP error handling.
+        return response
+    response.raise_for_status()
+    access_token = payload.get('access_token') if isinstance(payload, dict) else None
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise ValueError('Token endpoint response is missing a valid access token')
+    return response
+
+
 def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                                 enforce_enums):
     '''Share refresh configuration for loaded and newly issued tokens.'''
@@ -272,6 +288,7 @@ def _client_from_token_metadata(api_key, app_secret, metadata, asyncio,
                             limits=httpx.Limits(max_connections=100,
                                                 max_keepalive_connections=20,
                                                 keepalive_expiry=60.0))
+    session.register_compliance_hook('refresh_token_response', _validate_token_response)
     if not asyncio:
         _serialize_sync_token_refresh(session)
     _install_refresh_fallback(session, asynchronous=asyncio)
@@ -944,6 +961,7 @@ def client_from_received_url(
                         'client_from_access_functions for async writers')
     oauth = OAuth2Client(api_key, redirect_uri=auth_context.callback_url)
     try:
+        oauth.register_compliance_hook('access_token_response', _validate_token_response)
         token = oauth.fetch_token(
             TOKEN_ENDPOINT,
             authorization_response=received_url,

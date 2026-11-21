@@ -13,6 +13,75 @@ from schwab.utils import Utils
 
 
 class LoginRefreshTest(unittest.IsolatedAsyncioTestCase):
+    def test_initial_exchange_rejects_invalid_token_before_write(self):
+        oauth_class = auth.OAuth2Client
+        for status, payload, exception in ((429, {'message': 'slow down'}, httpx.HTTPStatusError),
+                                           (200, {}, ValueError), (200, {'access_token': ' '}, ValueError)):
+            with self.subTest(status=status, payload=payload):
+                def respond(request):
+                    self.assertEqual(str(request.url), auth.TOKEN_ENDPOINT)
+                    return httpx.Response(status, json=payload)
+
+                oauth = oauth_class('key', redirect_uri='https://127.0.0.1/callback',
+                                    transport=httpx.MockTransport(respond), trust_env=False)
+                writer = Mock()
+                context = auth.AuthContext('https://127.0.0.1/callback', '', 'state')
+                with patch.object(auth, 'OAuth2Client', return_value=oauth), self.assertRaises(exception):
+                    auth.client_from_received_url(
+                        'key', 'secret', context, context.callback_url + '?code=test&state=state', writer)
+                writer.assert_not_called()
+
+    async def test_invalid_refresh_preserves_session_and_persisted_credentials(self):
+        import time
+        from schwab.orders.equities import equity_buy_market
+
+        for asynchronous in (False, True):
+            for status, fallback in ((429, True), (429, False), (200, True)):
+                with self.subTest(asynchronous=asynchronous, status=status, fallback=fallback):
+                    calls = []
+                    original = {'access_token': 'existing', 'refresh_token': 'refresh',
+                                'token_type': 'Bearer', 'expires_at': int(time.time()) + 180}
+                    writer = Mock()
+                    def respond(request):
+                        calls.append(request.url.path)
+                        if str(request.url) == auth.TOKEN_ENDPOINT:
+                            return httpx.Response(status, json={'message': 'unavailable'})
+                        self.assertEqual(request.headers['Authorization'], 'Bearer existing')
+                        return httpx.Response(201)
+
+                    target = 'AsyncOAuth2Client' if asynchronous else 'OAuth2Client'
+                    session_class = getattr(auth, target)
+                    def make_session(*args, **kwargs):
+                        return session_class(*args, **kwargs, trust_env=False,
+                                             transport=httpx.MockTransport(respond))
+                    with patch.object(auth, target, side_effect=make_session):
+                        client = auth.client_from_access_functions(
+                            'key', 'secret', lambda: {'token': original.copy(), 'creation_timestamp': 1},
+                            writer, asyncio=asynchronous)
+                    client.configure_refresh_fallback(transient=fallback)
+                    async def place():
+                        order = equity_buy_market('XYZ', 1)
+                        if asynchronous:
+                            return await client.place_order('account', order)
+                        return await client.async_place_order('account', order)
+                    try:
+                        expected = ['/v1/oauth/token']
+                        if status == 429 and fallback:
+                            self.assertEqual((await place()).status_code, 201)
+                            expected.append('/trader/v1/accounts/account/orders')
+                        else:
+                            with self.assertRaises(httpx.HTTPStatusError if status == 429 else ValueError):
+                                await place()
+                        self.assertEqual(calls, expected)
+                        self.assertEqual(client.session.token, original)
+                        self.assertEqual(client.token_metadata.token, original)
+                        writer.assert_not_called()
+                    finally:
+                        if asynchronous:
+                            await client.close_async_session()
+                        else:
+                            client.close_session()
+
     async def test_new_login_refreshes_and_persists_for_both_clients(self):
         for asynchronous in (False, True):
             with self.subTest(asynchronous=asynchronous):
