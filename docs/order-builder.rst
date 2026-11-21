@@ -48,7 +48,7 @@ by :func:`schwab.orders.equities.equity_buy_limit`:
       "session": "NORMAL",
       "duration": "DAY",
       "orderType": "LIMIT",
-      "price": "190.90",
+      "price": "190.00",
       "orderLegCollection": [
           {
               "instruction": "BUY",
@@ -56,7 +56,7 @@ by :func:`schwab.orders.equities.equity_buy_limit`:
                   "assetType": "EQUITY",
                   "symbol": "MSFT"
               },
-              "quantity": 1
+              "quantity": 13
           }
       ],
       "orderStrategyType": "SINGLE"
@@ -104,6 +104,7 @@ rises to $1400 or falls below $1250:
                       "session": "NORMAL",
                       "duration": "GOOD_TILL_CANCEL",
                       "orderType": "LIMIT",
+                      "orderStrategyType": "SINGLE",
                       "price": "1400.00",
                       "orderLegCollection": [
                           {
@@ -120,6 +121,8 @@ rises to $1400 or falls below $1250:
                       "session": "NORMAL",
                       "duration": "GOOD_TILL_CANCEL",
                       "orderType": "STOP_LIMIT",
+                      "orderStrategyType": "SINGLE",
+                      "price": "1240.00",
                       "stopPrice": "1250.00",
                       "orderLegCollection": [
                           {
@@ -161,17 +164,18 @@ orders easy:
 .. code-block:: python
 
   from schwab.orders.common import (
-      OrderType, first_triggers_second, one_cancels_other)
+      Duration, OrderType, first_triggers_second, one_cancels_other)
   from schwab.orders.equities import equity_buy_limit, equity_sell_limit
 
-  first_triggers_second(
-      equity_buy_limit('GOOG', 1, 1310),
+  duration = Duration.GOOD_TILL_CANCEL
+  bracket = first_triggers_second(
+      equity_buy_limit('GOOG', 1, '1310.00').set_duration(duration),
       one_cancels_other(
-          equity_sell_limit('GOOG', 1, 1400),
-          equity_sell_limit('GOOG', 1, 1240)
+          equity_sell_limit('GOOG', 1, '1400.00').set_duration(duration),
+          equity_sell_limit('GOOG', 1, '1240.00')
+              .set_duration(duration)
               .set_order_type(OrderType.STOP_LIMIT)
-              .clear_price()
-              .set_stop_price(1250)
+              .set_stop_price('1250.00')
       ))
 
 You can find the full listing of order templates and utility functions 
