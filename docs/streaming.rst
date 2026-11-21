@@ -231,6 +231,8 @@ large values, and specialized book relabeling still run synchronously.
 Market-data DEBUG records contain a count rather than the full payload by default.
 Set ``log_stream_payloads=True`` to include redacted payloads for diagnostics;
 rendering those records can be expensive.
+Account-activity content is omitted from diagnostic logs because it can contain
+account numbers and embedded order details.
 
 If a capacity wait is canceled, the next ``handle_message()`` call resumes the
 message at its next uncalled handler. Handlers already invoked are not repeated.

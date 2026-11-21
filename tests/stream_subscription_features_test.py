@@ -151,6 +151,25 @@ class MessageSizeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(connect.await_args.kwargs['max_size'])
 
 class StreamLoggingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_payload_logging_omits_account_activity_and_keeps_quote_fields(self):
+        import json
+        frame = {'data': [
+            {'service': 'ACCT_ACTIVITY', 'content': [
+                {'1': 'synthetic-account', '2': 'OrderEntryRequest',
+                 '3': '{"orderId":"synthetic-order"}'}]},
+            {'service': 'LEVELONE_EQUITIES', 'content': [{'key': 'XYZ', '1': 12.5}]},
+        ]}
+        client = StreamClient(Mock(), log_stream_payloads=True)
+        client._socket = AsyncMock()
+        client._socket.recv.return_value = json.dumps(frame)
+        with self.assertLogs('schwab.streaming', level='DEBUG') as logs:
+            self.assertEqual(await client._receive(), frame)
+        message = '\n'.join(logs.output)
+        self.assertIn('account activity omitted', message)
+        self.assertIn('XYZ', message)
+        self.assertNotIn('synthetic-account', message)
+        self.assertNotIn('synthetic-order', message)
+
     async def test_data_summary_skips_payload_redaction(self):
         import json
         from unittest.mock import patch
