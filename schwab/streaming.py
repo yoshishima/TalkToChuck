@@ -98,7 +98,7 @@ class _BaseFieldEnum(Enum):
                 new_msg[new_key] = new_msg.pop(old_key)
 
     @classmethod
-    def relabeled_copy(cls, entry):
+    def relabeled_copy(cls, entry, copy_nested=None):
         '''Deep copy of a plain ``dict`` entry with numeric keys renamed.
 
         Produces the same keys, values and key order as deep-copying and then
@@ -109,9 +109,10 @@ class _BaseFieldEnum(Enum):
         unmapped = {}
         mapped = {}
         for key, value in entry.items():
-            if type(value) not in _JSON_ATOMIC_TYPES:
-                value = _json_clone(value)
             new_key = key_mapping.get(key)
+            if type(value) not in _JSON_ATOMIC_TYPES:
+                value = (copy_nested(new_key or key, value) if copy_nested
+                         else _json_clone(value))
             if new_key is None:
                 unmapped[key] = value
             else:
@@ -2429,6 +2430,52 @@ class StreamClient(EnumEnforcer):
         SEQUENCE = 2
 
     class _BookHandler(_Handler):
+        async def label_message_cooperatively(self, msg):
+            if type(msg) is not dict or type(msg.get('content')) is not list:
+                return self.label_message(msg)
+
+            # Build a private tree directly in its final form. Each list is
+            # filled before dispatch, including both sides and their exchanges.
+            child_fields = {
+                StreamClient.BookFields: {'BIDS': StreamClient.BidFields,
+                                          'ASKS': StreamClient.AskFields},
+                StreamClient.BidFields: {'BIDS': StreamClient.PerExchangeBidFields},
+                StreamClient.AskFields: {'ASKS': StreamClient.PerExchangeAskFields},
+            }
+            pending = []
+            def copy_nested(key, value):
+                child = children.get(key)
+                if child is None or not isinstance(value, list):
+                    return _json_clone(value)
+                result = []
+                pending.append((value, result, child))
+                return result
+
+            try:
+                result = {k: [] if k == 'content' else _json_clone(v)
+                          for k, v in msg.items()}
+                pending.append((msg['content'], result['content'], self._field_enum_type))
+                processed = 0
+                while pending:
+                    entries, output, fields = pending.pop()
+                    if type(entries) is not list:
+                        return self.label_message(msg)
+                    children = child_fields.get(fields)
+                    for entry in entries:
+                        if type(entry) is dict:
+                            output.append(fields.relabeled_copy(
+                                entry, copy_nested if children else None))
+                        elif isinstance(entry, dict):
+                            return self.label_message(msg)
+                        else:
+                            output.append(_json_clone(entry))
+                        processed += 1
+                        if processed % 128 == 0:
+                            await asyncio.sleep(0)
+                return result
+            except RecursionError:
+                return self.label_message(msg)
+
         def label_message(self, msg):
             # Relabel top-level fields. The result is a fresh copy whenever
             # there is content to relabel, so nested levels can be relabeled

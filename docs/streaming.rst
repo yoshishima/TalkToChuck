@@ -200,6 +200,8 @@ If a message is received for which no handler is registered, that message is
 ignored.
 
 Each handler receives its own copy of the message, including nested content.
+While relabeling a large book, the stream client yields periodically as it
+copies price levels and exchange entries. Handlers receive the complete book.
 Changes made by one handler do not affect other handlers. Messages decoded by
 the default decoder are copied with a fast copier for plain JSON data. Values
 of other types produced by a custom decoder, such as ``Decimal`` or
