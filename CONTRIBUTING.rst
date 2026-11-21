@@ -78,3 +78,12 @@ Documentation is built using `Sphinx <https://www.sphinx-doc.org/en/master/>`__:
 .. code-block:: shell
 
   sphinx-build docs/ docs-build
+
+++++++++++++++++++++++++
+Checking a release tag
+++++++++++++++++++++++++
+
+After updating ``schwab/version.py``, check the intended tag in the release
+checkout before creating it. For example, for package version 1.7.8 run
+``python .github/scripts/check_release_tag.py v1.7.8``. The same check runs
+on pushes of tags beginning with ``v``.
