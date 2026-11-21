@@ -13,7 +13,7 @@ class MyStreamConsumer:
     We use a class to enforce good code organization practices
     """
 
-    def __init__(self, api_key, client_secret, callback_url, queue_size=0,
+    def __init__(self, api_key, client_secret, callback_url, queue_size=100,
                  token_path='./token.json'):
         """
         We're storing the configuration variables within the class for easy
@@ -58,32 +58,14 @@ class MyStreamConsumer:
 
         await self.stream_client.level_one_equity_subs(self.symbols)
 
-        # Process queued messages in a separate task. Keep a reference to it:
-        # the event loop only holds weak references to tasks, so an
-        # unreferenced task can be garbage collected while it is running.
-        queue_task = asyncio.create_task(self.handle_queue())
-
-        # Continuously handle inbound messages
-        try:
+        # Propagate output errors even if dispatch is waiting for queue space.
+        async with asyncio.TaskGroup() as workers:
+            workers.create_task(self.handle_queue())
             while True:
                 await self.stream_client.handle_message()
-                if queue_task.done():
-                    # Surface errors from the queue consumer instead of
-                    # silently buffering messages nobody processes.
-                    queue_task.result()
-        finally:
-            queue_task.cancel()
 
     async def handle_level_one_equity(self, msg):
-        """
-        This is where we take msgs from the streaming client and put them on a
-        queue for later consumption. We use a queue to prevent us from wasting
-        resources processing old data, and falling behind.
-        """
-        # if the queue is full, make room
-        if self.queue.full():  # This won't happen if the queue doesn't have a max size
-            print('Handler queue is full. Awaiting to make room... Some messages might be dropped')
-            await self.queue.get()
+        """Wait for queue capacity so partial quote updates retain FIFO order."""
         await self.queue.put(msg)
 
     async def handle_queue(self):
@@ -92,7 +74,10 @@ class MyStreamConsumer:
         """
         while True:
             msg = await self.queue.get()
-            pprint.pprint(msg)
+            try:
+                await asyncio.to_thread(pprint.pprint, msg)
+            finally:
+                self.queue.task_done()
 
 
 async def main():
