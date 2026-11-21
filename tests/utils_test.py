@@ -5,7 +5,11 @@ from schwab.utils import EnumEnforcer
 from .utils import no_duplicates, MockResponse
 
 import enum
+from pathlib import Path
+from textwrap import dedent
 import unittest
+
+import httpx2
 
 
 class EnumEnforcerTest(unittest.TestCase):
@@ -49,6 +53,23 @@ class UtilsTest(unittest.TestCase):
 
     ##########################################################################
     # extract_order_id tests
+
+    def test_documented_workflow_recovers_created_order_id(self):
+        docs = (Path(__file__).resolve().parents[1] / 'docs' / 'util.rst').read_text()
+        code = docs.split('.. code-block:: python', 1)[1].split('.. automethod::', 1)[0]
+        url = 'https://api.schwabapi.com/trader/v1/accounts/test/orders'
+        self.mock_client.place_order.return_value = httpx2.Response(
+            201, headers={'Location': url + '/123'}, request=httpx2.Request('POST', url))
+        scope = {'client': self.mock_client, 'account_hash': 'test', 'order': {}}
+        exec(dedent(code), scope)
+        self.mock_client.place_order.assert_called_once_with('test', {})
+        self.assertEqual(scope['order_id'], 123)
+
+    def test_redirect_is_not_an_order_acknowledgement(self):
+        url = 'https://api.schwabapi.com/trader/v1/accounts/{}/orders/123'
+        response = MockResponse({}, 307, headers={'Location': url.format(self.account_hash)})
+        with self.assertRaises(UnsuccessfulOrderException):
+            self.utils.extract_order_id(response)
 
     @no_duplicates
     def test_extract_order_id_order_not_ok(self):

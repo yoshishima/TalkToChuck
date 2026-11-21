@@ -132,7 +132,7 @@ class Utils(EnumEnforcer):
                            account hash is not equal to the account hash set in this
                            ``Utils`` object.
         '''
-        if place_order_response.is_error:
+        if not place_order_response.is_success:
             raise UnsuccessfulOrderException(
                 'order not successful: status {}'.format(place_order_response.status_code))
 
