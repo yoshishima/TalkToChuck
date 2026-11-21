@@ -381,6 +381,12 @@ class TokenPathPreflightTest(unittest.TestCase):
         manual.assert_called_once()
         self.assertIn('RedirectServerTimeoutError: no server', output.getvalue())
 
+        with patch('schwab.auth.client_from_login_flow', side_effect=OSError('write failed')), \
+                patch('schwab.auth.client_from_manual_flow') as manual:
+            with self.assertRaisesRegex(OSError, 'write failed'):
+                module.main('key', 'secret', 'https://127.0.0.1:8182', 'unused', None)
+            manual.assert_not_called()
+
 
 # ---------------------------------------------------------------- D5 decoders
 class DecoderErrorTest(unittest.IsolatedAsyncioTestCase):

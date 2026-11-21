@@ -369,6 +369,10 @@ def _install_refresh_fallback(session, *, asynchronous):
 # client_from_login_flow
 
 
+class UnsupportedBrowserCallback(ValueError):
+    """The configured redirect URI requires the manual login flow."""
+
+
 def _get_callback_path(encoded_path):
     '''Return a literal Flask route while preserving the OAuth redirect URI.'''
     path = urllib.parse.unquote(encoded_path or '/', errors='strict')
@@ -377,7 +381,7 @@ def _get_callback_path(encoded_path):
     if ('<' in path or '>' in path or '//' in path
             or any(ord(char) < 32 for char in path)
             or path == '/schwab-py-internal/status'):
-        raise ValueError('Unsupported callback URL path')
+        raise UnsupportedBrowserCallback('Unsupported callback URL path')
     return path
 
 
@@ -609,7 +613,7 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
 
     if parsed.hostname != '127.0.0.1':
         # TODO: document this error
-        raise ValueError(
+        raise UnsupportedBrowserCallback(
                 ('Disallowed hostname {}. client_from_login_flow only allows '+
                  'callback URLs with hostname 127.0.0.1. See here for ' +
                  'more information: https://schwab-py.readthedocs.io/en/' +
@@ -641,7 +645,10 @@ def client_from_login_flow(api_key, app_secret, callback_url, token_path,
     # Context manager to kill the server upon completion
     @contextlib.contextmanager
     def callback_server():
-        server.start()
+        try:
+            server.start()
+        except OSError as exc:
+            raise RedirectServerError('Could not start the local callback server') from exc
 
         try:
             yield
