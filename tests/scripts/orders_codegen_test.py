@@ -11,6 +11,21 @@ from schwab.scripts.orders_codegen import latest_order_main, _latest_order
 
 
 class LatestOrderSelectionTest(unittest.TestCase):
+    def test_warns_when_the_requested_result_limit_is_reached(self):
+        orders = [{'orderId': n, 'enteredTime': '2025-01-01T12:00:00Z'}
+                  for n in range(3000)]
+        with patch('schwab.scripts.orders_codegen.client_from_token_file') as factory, \
+                patch('schwab.scripts.orders_codegen.construct_repeat_order') as construct, \
+                patch('schwab.scripts.orders_codegen.code_for_builder'), patch('builtins.print') as output:
+            query = factory.return_value.get_orders_for_all_linked_accounts
+            query.return_value = httpx.Response(200, json=orders)
+            result = latest_order_main(['--token_file', 'unused', '--api_key', 'key',
+                                        '--app_secret', 'secret'])
+        self.assertEqual(0, result)
+        query.assert_called_once_with(max_results=3000)
+        construct.assert_called_once_with(orders[-1])
+        self.assertIn('reached the requested result limit', str(output.call_args_list))
+
     def test_only_an_empty_list_means_no_recent_orders(self):
         args = ['--token_file', 'unused', '--api_key', 'key', '--app_secret', 'secret']
         for account_args in ([], ['--account_hash', 'test-account']):

@@ -421,6 +421,10 @@ For frequent polling when only recent activity is relevant, use
 one-day window by default and accepts a shorter fractional number of days.
 Older orders, including open orders, are excluded, so use an appropriately
 wide window or the full account query when reconciling complete order state.
+Each call retrieves one result set. If the count reaches ``max_results``
+(the documented broker default is 3,000), the window may contain more orders.
+Use narrower windows and deduplicate order IDs at shared boundaries. An
+unmatched order in a capped response still has an unknown outcome.
 
 .. automethod:: schwab.client.Client.get_recent_orders_for_account
 .. automethod:: schwab.client.Client.get_orders_for_all_linked_accounts

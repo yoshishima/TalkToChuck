@@ -7,6 +7,8 @@ from schwab.contrib.orders import (
     UnrepeatableOrderError, construct_repeat_order, code_for_builder)
 from schwab.scripts import APP_SECRET_ENV_VAR, resolve_app_secret
 
+_HISTORY_RESULT_LIMIT = 3000
+
 
 def _latest_order(orders):
     if not isinstance(orders, list) or not orders:
@@ -75,9 +77,9 @@ def latest_order_main(sys_args):
 
 
     if account_hash is not None:
-        response = client.get_orders_for_account(account_hash)
+        response = client.get_orders_for_account(account_hash, max_results=_HISTORY_RESULT_LIMIT)
     else:
-        response = client.get_orders_for_all_linked_accounts()
+        response = client.get_orders_for_all_linked_accounts(max_results=_HISTORY_RESULT_LIMIT)
     if response.status_code != httpx.codes.OK:
         print('Returned HTTP status code {} fetching order history.'.format(response.status_code))
         return -1
@@ -101,6 +103,9 @@ def latest_order_main(sys_args):
         except ValueError:
             print('Unable to determine the most recent order from its timestamp.')
             return -1
+        if len(orders) >= _HISTORY_RESULT_LIMIT:
+            print('# Warning: order history reached the requested result limit. '
+                  'This is the latest order among the returned rows.')
 
         # XXX: If necessary, warn about the jank around destinations
         emit_destination_warning_newline = False
